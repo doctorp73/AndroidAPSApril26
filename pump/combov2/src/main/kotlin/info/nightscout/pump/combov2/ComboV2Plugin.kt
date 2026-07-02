@@ -11,7 +11,6 @@ import app.aaps.core.data.pump.defs.PumpType
 import app.aaps.core.data.pump.defs.TimeChangeType
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.constraints.Constraint
-import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.constraints.PluginConstraints
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -40,7 +39,6 @@ import app.aaps.core.interfaces.rx.events.EventShowSnackbar
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.objects.constraints.ConstraintObject
 import app.aaps.core.ui.compose.icons.IcPluginCombo
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import info.nightscout.comboctl.android.AndroidBluetoothInterface
@@ -52,6 +50,7 @@ import info.nightscout.comboctl.base.ComboException
 import info.nightscout.comboctl.base.DisplayFrame
 import info.nightscout.comboctl.base.NullDisplayFrame
 import info.nightscout.comboctl.base.PairingPIN
+import info.nightscout.comboctl.base.ProgressReport
 import info.nightscout.comboctl.main.BasalProfile
 import info.nightscout.comboctl.main.QuantityNotChangingException
 import info.nightscout.comboctl.main.RTCommandProgressStage
@@ -69,6 +68,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -78,11 +78,13 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -114,7 +116,6 @@ class ComboV2Plugin @Inject constructor(
     commandQueue: CommandQueue,
     private val context: Context,
     private val rxBus: RxBus,
-    private val constraintChecker: ConstraintsChecker,
     sp: SP,
     private val pumpSync: PumpSync,
     private val dateUtil: DateUtil,
@@ -367,7 +368,7 @@ class ComboV2Plugin @Inject constructor(
     override suspend fun onStop() {
         aapsLogger.info(LTag.PUMP, "Stopping combov2 driver")
 
-        runBlocking {
+        run {
             // Cancel any ongoing background coroutines. This includes an ongoing
             // unfinished initialization that still waits for the user to grant
             // Bluetooth permissions. Also join to wait for the coroutines to
@@ -546,7 +547,7 @@ class ComboV2Plugin @Inject constructor(
             notificationManager.dismiss(NotificationId.BLUETOOTH_NOT_ENABLED)
 
             // Erase any display frame that may be left over from a previous connection.
-            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+            @OptIn(ExperimentalCoroutinesApi::class)
             _displayFrameUIFlow.resetReplayCache()
 
             stateAndStatusFlowsDeferred = pumpCoroutineScope.async {
@@ -929,15 +930,6 @@ class ComboV2Plugin @Inject constructor(
         // Insulin value must be greater than 0
         require(detailedBolusInfo.carbs == 0.0) { detailedBolusInfo.toString() }
         require(detailedBolusInfo.insulin > 0) { detailedBolusInfo.toString() }
-
-        val oldInsulinAmount = detailedBolusInfo.insulin
-        detailedBolusInfo.insulin = constraintChecker
-            .applyBolusConstraints(ConstraintObject(detailedBolusInfo.insulin, aapsLogger))
-            .value()
-        aapsLogger.debug(
-            LTag.PUMP,
-            "Applied bolus constraints:  old insulin amount: $oldInsulinAmount  new: ${detailedBolusInfo.insulin}"
-        )
 
         val acquiredPump = getAcquiredPump()
 
@@ -1403,8 +1395,15 @@ class ComboV2Plugin @Inject constructor(
 
     /*** Pairing API ***/
 
-    fun getPairingProgressFlow() =
-        pumpManager?.pairingProgressFlow ?: throw IllegalStateException("Attempting access uninitialized pump manager")
+    // Fallback emitted while pumpManager is null (driver still in NotInitialized
+    // state, e.g. Bluetooth permission not yet granted / Bluetooth disabled). This
+    // keeps getPairingProgressFlow() non-throwing so the pair-wizard ViewModel can
+    // be constructed and render its DriverNotInitialized screen instead of crashing.
+    private val idlePairingProgressFlow =
+        MutableStateFlow(ProgressReport(stageNumber = 0, numStages = 0, stage = BasicProgressStage.Idle, overallProgress = 0.0)).asStateFlow()
+
+    fun getPairingProgressFlow(): StateFlow<ProgressReport> =
+        pumpManager?.pairingProgressFlow ?: idlePairingProgressFlow
 
     fun resetPairingProgress() = pumpManager?.resetPairingProgress()
 
@@ -1568,6 +1567,15 @@ class ComboV2Plugin @Inject constructor(
     // finishes, the state is checked. Use isSuspended() instead.
     private val _driverStateUIFlow = MutableStateFlow<DriverState>(DriverState.NotInitialized)
     val driverStateUIFlow = _driverStateUIFlow.asStateFlow()
+
+    // Reactive variant of the pairing progress flow for UI that is constructed once and
+    // must keep working across a NotInitialized -> Disconnected transition: re-subscribes
+    // to the real pairing progress flow once pumpManager becomes available (the driver
+    // state flips to Disconnected right after pumpManager is set). Declared after
+    // driverStateUIFlow so it is not referenced before initialization.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val pairingProgressUiFlow: Flow<ProgressReport> =
+        driverStateUIFlow.flatMapLatest { getPairingProgressFlow() }
 
     // "Activity" is not to be confused with the Android Activity class.
     // An "activity" is something that a command does, for example

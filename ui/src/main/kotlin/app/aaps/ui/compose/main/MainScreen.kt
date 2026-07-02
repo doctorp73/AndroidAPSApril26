@@ -93,6 +93,11 @@ fun MainScreen(
     onSearchClear: () -> Unit,
     onSearchActiveChange: (Boolean) -> Unit,
     onSearchResultClick: (SearchIndexEntry) -> Unit,
+    onSearchPluginToggle: (PluginBase) -> Unit,
+    onConfirmSearchPluginSwitch: () -> Unit,
+    onDismissSearchPluginSwitch: () -> Unit,
+    onConfirmSearchHardwarePump: () -> Unit,
+    onDismissSearchHardwarePump: () -> Unit,
     // Menu/navigation
     onMenuClick: () -> Unit,
     onNavigate: (NavigationRequest) -> Unit,
@@ -226,6 +231,11 @@ fun MainScreen(
 
                 val activeSceneState by mainViewModel.activeSceneState.collectAsStateWithLifecycle()
                 val sceneExpired by mainViewModel.sceneExpired.collectAsStateWithLifecycle()
+                val masterReachable by mainViewModel.masterReachable.collectAsStateWithLifecycle()
+                // Stable pairing signal — hides the mutating nav buttons on an unpaired client.
+                val masterOrPairedClient by mainViewModel.masterOrPairedClient.collectAsStateWithLifecycle()
+                // (Probe-while-offline is now global — see ComposeMainActivity. This screen still reads
+                // masterReachable for its own gating.)
                 Box(modifier = Modifier.fillMaxSize()) {
                     // Main content
                     OverviewScreen(
@@ -264,6 +274,8 @@ fun MainScreen(
                         sceneExpired = sceneExpired,
                         onEndScene = { mainViewModel.requestSceneDeactivation() },
                         onDismissScene = { mainViewModel.dismissExpiredScene() },
+                        endSceneEnabled = masterReachable,
+                        commandsAllowed = masterOrPairedClient,
                         formatDuration = mainViewModel::formatDuration,
                         paddingValues = contentPadding,
                         fabBottomOffset = if (hasToolbar && showChrome) 56.dp else 0.dp,
@@ -282,10 +294,34 @@ fun MainScreen(
                             isSearching = searchUiState.isSearching,
                             isSearchingWiki = searchUiState.isSearchingWiki,
                             wikiOffline = searchUiState.wikiOffline,
+                            revision = searchUiState.revision,
                             onResultClick = onSearchResultClick,
+                            onPluginToggle = onSearchPluginToggle,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(contentPadding)
+                        )
+                    }
+
+                    // Plugin enable/disable confirmations raised from search results (same dialogs as Config Builder)
+                    searchUiState.pluginSwitchConfirmation?.let { confirmation ->
+                        OkCancelDialog(
+                            title = stringResource(R.string.configbuilder_switch_confirmation_title),
+                            message = stringResource(
+                                R.string.configbuilder_switch_confirmation,
+                                confirmation.fromName,
+                                confirmation.toName
+                            ),
+                            onConfirm = onConfirmSearchPluginSwitch,
+                            onDismiss = onDismissSearchPluginSwitch
+                        )
+                    }
+                    searchUiState.hardwarePumpConfirmation?.let { confirmation ->
+                        OkCancelDialog(
+                            title = stringResource(R.string.confirmation),
+                            message = confirmation.message,
+                            onConfirm = onConfirmSearchHardwarePump,
+                            onDismiss = onDismissSearchHardwarePump
                         )
                     }
 
@@ -362,6 +398,7 @@ fun MainScreen(
                                 treatmentViewModel.refreshState()
                                 showTreatmentSheet = true
                             },
+                            masterOrPairedClient = masterOrPairedClient,
                             quickWizardCount = uiState.quickWizardItems.size,
                             onAutomationClick = {
                                 scenesViewModel.refreshState()
@@ -477,6 +514,7 @@ fun MainScreen(
             ThreeButtonDialog(
                 title = confirmation.title,
                 message = confirmation.message,
+                icon = confirmation.icon,
                 primaryLabel = confirmation.confirmLabel ?: stringResource(R.string.ok),
                 onPrimary = { mainViewModel.executeConfirmableAction(confirmation.onConfirmAction) },
                 secondaryLabel = secondaryLabel,
@@ -487,6 +525,7 @@ fun MainScreen(
             OkCancelDialog(
                 title = confirmation.title,
                 message = confirmation.message,
+                icon = confirmation.icon,
                 onConfirm = { mainViewModel.executeConfirmableAction(confirmation.onConfirmAction) },
                 onDismiss = { mainViewModel.dismissActionConfirmation() }
             )

@@ -59,7 +59,7 @@ data class ProfileUiState(
     val isValid: Boolean = true,
     val isLocked: Boolean = false,
     val selectedTab: Int = 0,
-    val units: String = GlucoseUnit.MGDL.asText,
+    val units: String = GlucoseUnit.MGDL.displayLabel,
     val supportsDynamicIsf: Boolean = false,
     val supportsDynamicIc: Boolean = false,
     val basalMin: Double = 0.01,
@@ -184,7 +184,7 @@ class ProfileEditorViewModel @Inject constructor(
                 isEdited = locallyEdited,
                 isValid = profile != null && tabErrors.isEmpty(),
                 isLocked = isLocked,
-                units = currentUnits.asText,
+                units = currentUnits.displayLabel,
                 supportsDynamicIsf = aps?.supportsDynamicIsf() == true,
                 supportsDynamicIc = aps?.supportsDynamicIc() == true,
                 basalMin = pumpDescription.basalMinimumRate,
@@ -417,7 +417,16 @@ class ProfileEditorViewModel @Inject constructor(
                 // Flag set BEFORE the replace so the event the replace fires is recognised as ours.
                 savePending = true
                 profileRepository.replace(editingIndex, profile)
-                    .onSuccess { locallyEdited = false }
+                    .onSuccess {
+                        // replace() already emitted on profileRepository.profiles (via snapshot())
+                        // BEFORE returning; on Main.immediate that synchronously ran the savePending
+                        // subscriber's loadState() while locallyEdited was still true, latching
+                        // isEdited=true. Clear the flag and re-run loadState() here so isEdited
+                        // reflects the saved state and the Save/Reset actions disappear on the FIRST
+                        // save — mirrors the isNewDraft branch above.
+                        locallyEdited = false
+                        loadState()
+                    }
                     .onFailure { error ->
                         // Clear the flag so the NEXT external event isn't mis-attributed to this
                         // failed save. Surface the error in the log; the user keeps their unsaved

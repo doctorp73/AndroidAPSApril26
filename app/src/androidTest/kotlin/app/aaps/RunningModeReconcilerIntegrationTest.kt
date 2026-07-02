@@ -24,7 +24,7 @@ import app.aaps.implementation.profile.ProfileFunctionImpl
 import app.aaps.plugins.aps.loop.runningMode.RunningModeExpiryScheduler
 import app.aaps.plugins.aps.loop.runningMode.RunningModeExpiryWorker
 import app.aaps.plugins.aps.loop.runningMode.RunningModeReconciler
-import app.aaps.plugins.sync.nsShared.NsIncomingDataProcessor
+import app.aaps.plugins.sync.nsclientV3.NsIncomingDataProcessor
 import com.google.common.truth.Truth.assertThat
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.launch
@@ -372,7 +372,7 @@ class RunningModeReconcilerIntegrationTest : HiltInstrumentedTest() {
             pumpSync.expectedPumpState().profile != null
         ) return
 
-        nsIncomingDataProcessor.processProfile(JSONObject(profileData), false)
+        nsIncomingDataProcessor.processProfile(JSONObject(profileData), true)
         val store = profileRepository.profile.value ?: error("no profile store after NS import")
         val defaultName = store.getDefaultProfileName() ?: error("no default profile name")
         profileFunction.createProfileSwitch(

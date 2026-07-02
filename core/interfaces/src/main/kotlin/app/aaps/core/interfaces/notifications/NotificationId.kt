@@ -1,11 +1,24 @@
 package app.aaps.core.interfaces.notifications
 
+import app.aaps.core.interfaces.notifications.NotificationCategory.AUTOMATION
+import app.aaps.core.interfaces.notifications.NotificationCategory.CGM
+import app.aaps.core.interfaces.notifications.NotificationCategory.LOOP
+import app.aaps.core.interfaces.notifications.NotificationCategory.PROFILE
+import app.aaps.core.interfaces.notifications.NotificationCategory.PUMP
+import app.aaps.core.interfaces.notifications.NotificationCategory.SYNC
+import app.aaps.core.interfaces.notifications.NotificationCategory.SYSTEM
 import app.aaps.core.interfaces.notifications.NotificationId.Companion.fromOrdinal
+import app.aaps.core.interfaces.notifications.NotificationLevel.ANNOUNCEMENT
+import app.aaps.core.interfaces.notifications.NotificationLevel.IMPORTANT
+import app.aaps.core.interfaces.notifications.NotificationLevel.INFO
+import app.aaps.core.interfaces.notifications.NotificationLevel.LOW
+import app.aaps.core.interfaces.notifications.NotificationLevel.NORMAL
+import app.aaps.core.interfaces.notifications.NotificationLevel.URGENT
 
 /**
  * Identity + intrinsic severity of every AAPS notification.
  *
- * [defaultLevel] is the single source of truth for severity — a caller should not normally
+ * [defaultLevel] is the single source of truth for severity - a caller should not normally
  * override it at the post site. [NotificationLevel.URGENT] is the alarm tier (sound + ramp +
  * full-screen) and is reserved for acute insulin-delivery failures, critical BG, and
  * user-configured alarms.
@@ -16,153 +29,159 @@ import app.aaps.core.interfaces.notifications.NotificationId.Companion.fromOrdin
  */
 @Suppress("unused")
 enum class NotificationId(
-    val category: NotificationCategory = NotificationCategory.GENERAL,
-    val defaultLevel: NotificationLevel = NotificationLevel.NORMAL,
+    val defaultLevel: NotificationLevel,
+    val category: NotificationCategory,
     val allowMultiple: Boolean = false
 ) {
 
     // Profile
-    PROFILE_SET_OK(category = NotificationCategory.PROFILE, defaultLevel = NotificationLevel.INFO),
-    PROFILE_NOT_SET_NOT_INITIALIZED(category = NotificationCategory.PROFILE, defaultLevel = NotificationLevel.URGENT),
+    PROFILE_SET_OK(INFO, PROFILE),
+    PROFILE_NOT_SET_NOT_INITIALIZED(NORMAL, PROFILE),
 
     // Basal profile failed to write to the pump (wrong basal until fixed). Also covers the old
     // DanaR-only PROFILE_SET_FAILED, which was merged here.
-    FAILED_UPDATE_PROFILE(category = NotificationCategory.PROFILE, defaultLevel = NotificationLevel.URGENT),
-    INVALID_PROFILE_NOT_ACCEPTED(category = NotificationCategory.PROFILE),
+    FAILED_UPDATE_PROFILE(URGENT, PROFILE),
+    INVALID_PROFILE_NOT_ACCEPTED(NORMAL, PROFILE),
 
-    // Pump — general
-    EXTENDED_BOLUS_DISABLED(category = NotificationCategory.PUMP),
-    PUMP_ERROR(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.URGENT),
-    WRONG_SERIAL_NUMBER(category = NotificationCategory.PUMP),
-    WRONG_BASAL_STEP(category = NotificationCategory.PUMP),
-    WRONG_DRIVER(category = NotificationCategory.PUMP),
-    PUMP_UNREACHABLE(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.URGENT),
-    UNSUPPORTED_FIRMWARE(category = NotificationCategory.PUMP),
-    MINIMAL_BASAL_VALUE_REPLACED(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.INFO),
-    BASAL_PROFILE_NOT_ALIGNED_TO_HOURS(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.INFO),
-    WRONG_PUMP_PASSWORD(category = NotificationCategory.PUMP),
-    MAXIMUM_BASAL_VALUE_REPLACED(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.INFO),
-    DEVICE_NOT_PAIRED(category = NotificationCategory.PUMP),
-    UNSUPPORTED_ACTION_IN_PUMP(category = NotificationCategory.PUMP),
-    WRONG_PUMP_DATA(category = NotificationCategory.PUMP),
-    PUMP_SUSPENDED(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.IMPORTANT),
-    BLUETOOTH_NOT_ENABLED(category = NotificationCategory.PUMP),
-    PATCH_NOT_ACTIVE(category = NotificationCategory.PUMP),
-    PUMP_SETTINGS_FAILED(category = NotificationCategory.PUMP),
-    PUMP_TIMEZONE_UPDATE_FAILED(category = NotificationCategory.PUMP),
-    BLUETOOTH_NOT_SUPPORTED(category = NotificationCategory.PUMP),
-    PUMP_WARNING(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.IMPORTANT),
-    PUMP_SYNC_ERROR(category = NotificationCategory.PUMP),
-    BASAL_VALUE_BELOW_MINIMUM(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.INFO),
+    // Pump - general
+    EXTENDED_BOLUS_DISABLED(IMPORTANT, PUMP),
+    PUMP_ERROR(URGENT, PUMP),
+    // A user/remote (non-SMB) bolus failed to deliver - surfaced once, here, from the executor (the entry
+    // dialog is gone by the time the async result arrives). SMB failures stay silent (the loop self-corrects).
+    BOLUS_DELIVERY_FAILED(URGENT, PUMP),
+    WRONG_SERIAL_NUMBER(NORMAL, PUMP),
+    WRONG_BASAL_STEP(NORMAL, PUMP),
+    WRONG_DRIVER(NORMAL, PUMP),
+    PUMP_UNREACHABLE(URGENT, PUMP),
+    UNSUPPORTED_FIRMWARE(IMPORTANT, PUMP),
+    MINIMAL_BASAL_VALUE_REPLACED(NORMAL, PUMP),
+    BASAL_PROFILE_NOT_ALIGNED_TO_HOURS(NORMAL, PUMP),
+    WRONG_PUMP_PASSWORD(IMPORTANT, PUMP),
+    MAXIMUM_BASAL_VALUE_REPLACED(NORMAL, PUMP),
+    DEVICE_NOT_PAIRED(NORMAL, PUMP),
+    UNSUPPORTED_ACTION_IN_PUMP(NORMAL, PUMP),
+    WRONG_PUMP_DATA(NORMAL, PUMP),
+    PUMP_SUSPENDED(NORMAL, PUMP),
+    BLUETOOTH_NOT_ENABLED(INFO, PUMP),
+    PATCH_NOT_ACTIVE(NORMAL, PUMP),
+    PUMP_SETTINGS_FAILED(NORMAL, PUMP),
+    PUMP_TIMEZONE_UPDATE_FAILED(NORMAL, PUMP),
+    BLUETOOTH_NOT_SUPPORTED(IMPORTANT, PUMP),
+    PUMP_WARNING(NORMAL, PUMP),
+    PUMP_SYNC_ERROR(NORMAL, PUMP),
+    BASAL_VALUE_BELOW_MINIMUM(NORMAL, PUMP),
 
-    // Pump — Combo
-    COMBO_PUMP_ALARM(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.URGENT),
-    COMBO_UNKNOWN_TBR(category = NotificationCategory.PUMP),
+    // Pump - Combo
+    COMBO_PUMP_ALARM(URGENT, PUMP),
+    COMBO_UNKNOWN_TBR(LOW, PUMP),
 
-    // Pump — Medtronic
-    MEDTRONIC_PUMP_ALARM(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.URGENT),
-    RILEYLINK_CONNECTION(category = NotificationCategory.PUMP),
-    MDT_INVALID_HISTORY_DATA(category = NotificationCategory.PUMP),
+    // Pump - Medtronic
+    MEDTRONIC_PUMP_ALARM(URGENT, PUMP),
+    RILEYLINK_CONNECTION(NORMAL, PUMP),
+    MDT_INVALID_HISTORY_DATA(NORMAL, PUMP),
 
-    // Pump — Insight
-    INSIGHT_DATE_TIME_UPDATED(category = NotificationCategory.PUMP),
-    INSIGHT_TIMEOUT_DURING_HANDSHAKE(category = NotificationCategory.PUMP),
+    // Pump - Insight
+    INSIGHT_DATE_TIME_UPDATED(INFO, PUMP),
+    INSIGHT_TIMEOUT_DURING_HANDSHAKE(NORMAL, PUMP),
 
-    // Pump — Omnipod
-    OMNIPOD_POD_NOT_ATTACHED(category = NotificationCategory.PUMP),
-    OMNIPOD_POD_SUSPENDED(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.IMPORTANT),
-    OMNIPOD_POD_ALERTS_UPDATED(category = NotificationCategory.PUMP),
-    OMNIPOD_POD_ALERTS(category = NotificationCategory.PUMP),
-    OMNIPOD_TBR_ALERTS(category = NotificationCategory.PUMP),
-    OMNIPOD_POD_FAULT(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.URGENT),
-    OMNIPOD_UNCERTAIN_SMB(category = NotificationCategory.PUMP),
-    OMNIPOD_UNKNOWN_TBR(category = NotificationCategory.PUMP),
-    OMNIPOD_STARTUP_STATUS_REFRESH_FAILED(category = NotificationCategory.PUMP),
-    OMNIPOD_TIME_OUT_OF_SYNC(category = NotificationCategory.PUMP),
+    // Pump - Omnipod
+    OMNIPOD_POD_NOT_ATTACHED(NORMAL, PUMP),
+    OMNIPOD_POD_SUSPENDED(NORMAL, PUMP),
+    OMNIPOD_POD_ALERTS_UPDATED(INFO, PUMP),
+    OMNIPOD_POD_ALERTS(URGENT, PUMP),
+    OMNIPOD_TBR_ALERTS(LOW, PUMP),
+    OMNIPOD_POD_FAULT(URGENT, PUMP),
+    OMNIPOD_UNCERTAIN_SMB(NORMAL, PUMP),
+    OMNIPOD_UNKNOWN_TBR(LOW, PUMP),
+    OMNIPOD_STARTUP_STATUS_REFRESH_FAILED(NORMAL, PUMP),
+    OMNIPOD_TIME_OUT_OF_SYNC(LOW, PUMP),
 
-    // Pump — EOPatch
-    EOFLOW_PATCH_ALERT(category = NotificationCategory.PUMP, allowMultiple = true),
+    // Pump - EOPatch
+    EOFLOW_PATCH_ALERT(URGENT, PUMP, allowMultiple = true),
 
-    // Pump — Equil
-    EQUIL_ALARM(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.URGENT),
-    EQUIL_ALARM_INSULIN(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.URGENT),
+    // Pump - Equil
+    EQUIL_ALARM(URGENT, PUMP),
+    EQUIL_ALARM_INSULIN(URGENT, PUMP),
 
-    // Pump — Dana
-    DANA_PUMP_ALARM(category = NotificationCategory.PUMP, defaultLevel = NotificationLevel.URGENT),
+    // Pump - Dana
+    DANA_PUMP_ALARM(URGENT, PUMP),
+    // "Bolus block" enabled in pump settings - blocks all bolus delivery (wrong configuration for AAPS)
+    DANA_BOLUS_BLOCK(URGENT, PUMP),
 
-    // Pump — Dana emulator
-    PUMP_EMULATOR_DISPLAY(category = NotificationCategory.PUMP),
+    // Pump - Dana emulator
+    PUMP_EMULATOR_DISPLAY(INFO, PUMP),
 
     // CGM
-    BG_READINGS_MISSED(category = NotificationCategory.CGM, defaultLevel = NotificationLevel.IMPORTANT),
-    SENSOR_CHANGE_DETECTED(category = NotificationCategory.CGM),
+    BG_READINGS_MISSED(URGENT, CGM),
+    SENSOR_CHANGE_DETECTED(NORMAL, CGM),
 
-    // CGM — Aidex
-    AIDEX_SENSOR_EXPIRED(category = NotificationCategory.CGM, defaultLevel = NotificationLevel.URGENT),
-    AIDEX_SENSOR_ERROR(category = NotificationCategory.CGM, defaultLevel = NotificationLevel.URGENT),
-    AIDEX_SENSOR_STABILIZING(category = NotificationCategory.CGM),
-    AIDEX_REPLACE_SENSOR(category = NotificationCategory.CGM, defaultLevel = NotificationLevel.URGENT),
-    AIDEX_SIGNAL_LOST(category = NotificationCategory.CGM, defaultLevel = NotificationLevel.IMPORTANT),
-    EVERSENSE_RELEASE(category = NotificationCategory.CGM),
-    EVERSENSE_PLACEMENT(category = NotificationCategory.CGM),
-    EVERSENSE_CREDENTIALS(category = NotificationCategory.CGM),
-    EVERSENSE_FIRMWARE(category = NotificationCategory.CGM, defaultLevel = NotificationLevel.INFO),
+    // CGM - Aidex
+    AIDEX_SENSOR_EXPIRED(IMPORTANT, CGM),
+    AIDEX_SENSOR_ERROR(IMPORTANT, CGM),
+    AIDEX_SENSOR_STABILIZING(NORMAL, CGM),
+    AIDEX_REPLACE_SENSOR(NORMAL, CGM),
+    AIDEX_SIGNAL_LOST(NORMAL, CGM),
+
+    // CGM - Eversense
+    EVERSENSE_RELEASE(NORMAL, CGM),
+    EVERSENSE_PLACEMENT(NORMAL, CGM),
+    EVERSENSE_CREDENTIALS(NORMAL, CGM),
+    EVERSENSE_FIRMWARE(INFO, CGM),
 
     // Loop / APS
-    EASY_MODE_ENABLED(category = NotificationCategory.LOOP),
-    UD_MODE_ENABLED(category = NotificationCategory.LOOP),
-    SHORT_DIA(category = NotificationCategory.LOOP),
-    CARBS_REQUIRED(category = NotificationCategory.LOOP, defaultLevel = NotificationLevel.IMPORTANT),
-    SMB_FALLBACK(category = NotificationCategory.LOOP, defaultLevel = NotificationLevel.IMPORTANT),
-    DYN_ISF_FALLBACK(category = NotificationCategory.LOOP, defaultLevel = NotificationLevel.IMPORTANT),
+    EASY_MODE_ENABLED(IMPORTANT, LOOP),
+    UD_MODE_ENABLED(IMPORTANT, LOOP),
+    SHORT_DIA(IMPORTANT, LOOP),
+    CARBS_REQUIRED(NORMAL, LOOP),
+    SMB_FALLBACK(NORMAL, LOOP),
+    DYN_ISF_FALLBACK(NORMAL, LOOP),
 
-    // Sync — Nightscout
-    OLD_NS(category = NotificationCategory.SYNC),
-    NSCLIENT_NO_WRITE_PERMISSION(category = NotificationCategory.SYNC),
-    NS_ANNOUNCEMENT(category = NotificationCategory.SYNC, defaultLevel = NotificationLevel.ANNOUNCEMENT),
-    NS_ALARM(category = NotificationCategory.SYNC, defaultLevel = NotificationLevel.IMPORTANT),
-    NS_URGENT_ALARM(category = NotificationCategory.SYNC, defaultLevel = NotificationLevel.URGENT),
-    NS_MALFUNCTION(category = NotificationCategory.SYNC),
-    NSCLIENT_VERSION_DOES_NOT_MATCH(category = NotificationCategory.SYNC),
-    OPEN_HUMANS_SIGNED_OUT(category = NotificationCategory.SYNC),
+    // Sync - Nightscout
+    OLD_NS(IMPORTANT, SYNC),
+    NSCLIENT_NO_WRITE_PERMISSION(NORMAL, SYNC),
+    NS_ANNOUNCEMENT(ANNOUNCEMENT, SYNC),
+    NS_ALARM(URGENT, SYNC),
+    NS_URGENT_ALARM(URGENT, SYNC),
+    NS_MALFUNCTION(IMPORTANT, SYNC),
+    NSCLIENT_VERSION_DOES_NOT_MATCH(NORMAL, SYNC),
+    NSCLIENT_PAIRING_ORPHAN(NORMAL, SYNC),
+    OPEN_HUMANS_SIGNED_OUT(NORMAL, SYNC),
 
-    // Sync — SMS
-    INVALID_PHONE_NUMBER(category = NotificationCategory.SYNC),
-    INVALID_MESSAGE_BODY(category = NotificationCategory.SYNC),
-    APPROACHING_DAILY_LIMIT(category = NotificationCategory.SYNC),
+    // Sync - SMS
+    INVALID_PHONE_NUMBER(IMPORTANT, SYNC),
+    INVALID_MESSAGE_BODY(NORMAL, SYNC),
+    APPROACHING_DAILY_LIMIT(IMPORTANT, SYNC),
 
     // System
-    TOAST_ALARM(category = NotificationCategory.SYSTEM),
-    DST_LOOP_DISABLED(category = NotificationCategory.SYSTEM),
-    DST_IN_24H(category = NotificationCategory.SYSTEM),
-    DISK_FULL(category = NotificationCategory.SYSTEM, defaultLevel = NotificationLevel.URGENT),
-    OVER_24H_TIME_CHANGE_REQUESTED(category = NotificationCategory.SYSTEM),
-    INVALID_VERSION(category = NotificationCategory.SYSTEM),
-    TIME_OR_TIMEZONE_CHANGE(category = NotificationCategory.SYSTEM),
-    NEW_VERSION_DETECTED(category = NotificationCategory.SYSTEM),
-    VERSION_EXPIRE(category = NotificationCategory.SYSTEM),
-    IDENTIFICATION_NOT_SET(category = NotificationCategory.SYSTEM),
-    MASTER_PASSWORD_NOT_SET(category = NotificationCategory.SYSTEM),
-    AAPS_DIR_NOT_SELECTED(category = NotificationCategory.SYSTEM),
-    GOOGLE_DRIVE_ERROR(category = NotificationCategory.SYSTEM),
-    SETTINGS_EXPORT_RESULT(category = NotificationCategory.SYSTEM),
-    SNACKBAR_FALLBACK(category = NotificationCategory.SYSTEM, allowMultiple = true),
+    TOAST_ALARM(URGENT, SYSTEM),
+    DST_LOOP_DISABLED(IMPORTANT, SYSTEM),
+    DST_IN_24H(LOW, SYSTEM),
+    DISK_FULL(IMPORTANT, SYSTEM),
+    OVER_24H_TIME_CHANGE_REQUESTED(LOW, SYSTEM),
+    INVALID_VERSION(IMPORTANT, SYSTEM),
+    TIME_OR_TIMEZONE_CHANGE(NORMAL, SYSTEM),
+    NEW_VERSION_DETECTED(NORMAL, SYSTEM),
+    VERSION_EXPIRE(IMPORTANT, SYSTEM),
+    IDENTIFICATION_NOT_SET(NORMAL, SYSTEM),
+    MASTER_PASSWORD_NOT_SET(IMPORTANT, SYSTEM),
+    AAPS_DIR_NOT_SELECTED(NORMAL, SYSTEM),
+    GOOGLE_DRIVE_ERROR(IMPORTANT, SYSTEM),
+    SETTINGS_EXPORT_RESULT(INFO, SYSTEM),
+    SNACKBAR_FALLBACK(NORMAL, SYSTEM, allowMultiple = true),
 
-    // Automation — general notification action (NOT the "Alarm" action, which uses the system
+    // Automation - general notification action (NOT the "Alarm" action, which uses the system
     // alarm clock via TimerUtil.scheduleReminder, not this notification path).
-    AUTOMATION_MESSAGE(category = NotificationCategory.AUTOMATION, allowMultiple = true),
+    AUTOMATION_MESSAGE(IMPORTANT, AUTOMATION, allowMultiple = true),
 
     // Scenes
-    SCENE_ENDED(category = NotificationCategory.SYSTEM, allowMultiple = true),
-    SCENE_CHAINED(category = NotificationCategory.SYSTEM, allowMultiple = true),
-    SCENE_CHAIN_SKIPPED(category = NotificationCategory.SYSTEM, allowMultiple = true),
-    SCENE_CHAIN_ERROR(category = NotificationCategory.SYSTEM, allowMultiple = true),
-    EVERSENSE_ALARM(category = NotificationCategory.CGM);
+    SCENE_ENDED(INFO, AUTOMATION, allowMultiple = true),
+    SCENE_CHAINED(INFO, AUTOMATION, allowMultiple = true),
+    SCENE_CHAIN_SKIPPED(NORMAL, AUTOMATION, allowMultiple = true),
+    SCENE_CHAIN_ERROR(IMPORTANT, AUTOMATION, allowMultiple = true),
+    EVERSENSE_ALARM(NORMAL, CGM);
 
     companion object {
 
         fun fromOrdinal(ordinal: Int): NotificationId? = entries.getOrNull(ordinal)
     }
 }
-
-

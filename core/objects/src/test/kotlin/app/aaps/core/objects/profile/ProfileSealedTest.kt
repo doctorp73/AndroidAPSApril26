@@ -64,7 +64,8 @@ class ProfileSealedTest : TestBase() {
         dateUtil = DateUtilImpl(context)
         hardLimits = HardLimitsMock(preferences, rh)
         whenever(activePlugin.activePump).thenReturn(testPumpPlugin)
-        whenever(rh.gs(app.aaps.core.ui.R.string.profile_per_unit)).thenReturn("/U")
+        whenever(rh.gs(app.aaps.core.ui.R.string.profile_isf_units_mgdl)).thenReturn("mg/dL/U")
+        whenever(rh.gs(app.aaps.core.ui.R.string.profile_isf_units_mmol)).thenReturn("mmol/L/U")
         whenever(rh.gs(app.aaps.core.ui.R.string.profile_carbs_per_unit)).thenReturn("g/U")
         whenever(rh.gs(app.aaps.core.ui.R.string.profile_ins_units_per_hour)).thenReturn("U/h")
         whenever(rh.gs(anyInt(), anyString())).thenReturn("")
@@ -87,14 +88,14 @@ class ProfileSealedTest : TestBase() {
         c[Calendar.MINUTE] = 0
         c[Calendar.SECOND] = 0
         c[Calendar.MILLISECOND] = 0
-        assertThat(p.getIsfMgdlForCarbs(c.timeInMillis, "test", config, processedDeviceStatusData)).isWithin(0.01).of(108.0)
+        assertThat(p.getIsfMgdlForCarbs(c.timeInMillis, "test", config, processedDeviceStatusData)).isWithin(0.01).of(108.0935)
         c[Calendar.HOUR_OF_DAY] = 2
-        assertThat(p.getIsfMgdlForCarbs(c.timeInMillis, "test", config, processedDeviceStatusData)).isWithin(0.01).of(111.6)
+        assertThat(p.getIsfMgdlForCarbs(c.timeInMillis, "test", config, processedDeviceStatusData)).isWithin(0.01).of(111.6967)
 //        assertThat(p.getIsfTimeFromMidnight(2 * 60 * 60)).isWithin(0.01).of(110.0)
         assertThat(p.getIsfList(rh, dateUtil).replace(".", ",")).isEqualTo(
             """
-    00:00    6,0 mmol/U
-    02:00    6,2 mmol/U
+    00:00    6,0 mmol/L/U
+    02:00    6,2 mmol/L/U
     """.trimIndent()
         )
         assertThat(p.getIc(c.timeInMillis)).isWithin(0.01).of(30.0)
@@ -108,11 +109,11 @@ class ProfileSealedTest : TestBase() {
         assertThat(p.percentageBasalSum()).isWithin(0.01).of(2.4)
         assertThat(p.baseBasalSum()).isWithin(0.01).of(2.4)
 //        assertThat( p.getTargetMgdl(2 * 60 * 60)).isWithin(0.01).of(81.0)
-        assertThat(p.getTargetLowMgdl(c.timeInMillis)).isWithin(0.01).of(90.0)
+        assertThat(p.getTargetLowMgdl(c.timeInMillis)).isWithin(0.01).of(90.078)
 //        assertThat( p.getTargetLowTimeFromMidnight(2 * 60 * 60)).isWithin(0.01).of(4.0)
-        assertThat(p.getTargetHighMgdl(c.timeInMillis)).isWithin(0.01).of(90.0)
+        assertThat(p.getTargetHighMgdl(c.timeInMillis)).isWithin(0.01).of(90.078)
 //        assertThat( p.getTargetHighTimeFromMidnight(2 * 60 * 60)).isWithin(0.01).of(5.0)
-        assertThat(p.getTargetList(rh, dateUtil).replace(".", ",")).isEqualTo("00:00    5,0 - 5,0 mmol")
+        assertThat(p.getTargetList(rh, dateUtil).replace(".", ",")).isEqualTo("00:00    5,0 - 5,0 mmol/L")
         assertThat(p.percentage).isEqualTo(100)
         assertThat(p.timeshift).isEqualTo(0)
 
@@ -136,16 +137,16 @@ class ProfileSealedTest : TestBase() {
         assertThat(p.getBasal(c.timeInMillis)).isWithin(0.01).of(0.05)
         assertThat(p.percentageBasalSum()).isWithin(0.01).of(1.2)
         assertThat(p.getIc(c.timeInMillis)).isWithin(0.01).of(60.0)
-        assertThat(p.getIsfMgdlForCarbs(c.timeInMillis, "test", config, processedDeviceStatusData)).isWithin(0.01).of(223.2)
+        assertThat(p.getIsfMgdlForCarbs(c.timeInMillis, "test", config, processedDeviceStatusData)).isWithin(0.01).of(223.3933)
 
         // Test timeshift functionality
         p = ProfileSealed.Pure(pureProfileFromJson(JSONObject(okProfile), dateUtil)!!, activePlugin)
         p.ts = 1
         assertThat(p.getIsfList(rh, dateUtil).replace(',', '.')).isEqualTo(
             """
-                00:00    6.2 mmol/U
-                01:00    6.0 mmol/U
-                03:00    6.2 mmol/U
+                00:00    6.2 mmol/L/U
+                01:00    6.0 mmol/L/U
+                03:00    6.2 mmol/L/U
                 """.trimIndent()
         )
 

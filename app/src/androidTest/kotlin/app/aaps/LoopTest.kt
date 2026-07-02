@@ -30,7 +30,7 @@ import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
 import app.aaps.plugins.aps.events.EventResetOpenAPSGui
 import app.aaps.plugins.aps.loop.events.EventLoopSetLastRunGui
 import app.aaps.plugins.constraints.objectives.ObjectivesPlugin
-import app.aaps.plugins.sync.nsShared.NsIncomingDataProcessor
+import app.aaps.plugins.sync.nsclientV3.NsIncomingDataProcessor
 import com.google.common.truth.Truth.assertThat
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.runBlocking
@@ -125,7 +125,7 @@ class LoopTest : HiltInstrumentedTest() {
         assertThat((loopStatusEvent.second as EventLoopSetLastRunGui).text).contains("NO PROFILE SET")
 
         // Set Profile in ProfilePlugin
-        nsIncomingDataProcessor.processProfile(JSONObject(profileData), false)
+        nsIncomingDataProcessor.processProfile(JSONObject(profileData), true)
         assertThat(profileRepository.profile.value).isNotNull()
 
         // Create a profile switch

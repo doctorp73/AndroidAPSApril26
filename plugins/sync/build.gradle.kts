@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.hilt)
     id("android-module-dependencies")
     id("test-module-dependencies")
+    id("compose-test-module-dependencies")
     id("jacoco-module-dependencies")
 }
 
@@ -35,6 +36,7 @@ dependencies {
 
 
     implementation(libs.kotlinx.coroutines.rx3)
+    implementation(libs.kotlinx.datetime)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.androidx.work.testing)
 
@@ -61,6 +63,9 @@ dependencies {
     // SMS Communicator (OTP + QR code)
     implementation(libs.com.eatthepath.java.otp)
     implementation(libs.com.github.kenglxn.qrgen.android)
+    // ZXing is pulled transitively by qrgen but SmsCommunicatorOtpScreen imports ErrorCorrectionLevel
+    // directly — declare it explicitly so a future qrgen upgrade can't silently drop the symbol.
+    implementation(libs.com.google.zxing.core)
 
     // Garmin
     api(libs.com.garmin.connectiq) { artifact { type = "aar" } }
