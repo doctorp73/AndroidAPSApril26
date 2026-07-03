@@ -36,7 +36,9 @@ class VersionCheckerPlugin @Inject constructor(
 ), PluginConstraints {
 
     override suspend fun applyMaxIOBConstraints(maxIob: Constraint<Double>): Constraint<Double> {
-        versionCheckerUtils.triggerCheckVersion()
+        // Version check disabled - triggerCheckVersion() also fired here on every loop cycle via
+        // the IOB constraint chain, independent of the MainApp.kt startup trigger disabled earlier.
+        // versionCheckerUtils.triggerCheckVersion()
         val endDate = preferences.get(LongComposedKey.AppExpiration, config.VERSION_NAME)
         return if (endDate != 0L && dateUtil.now() > endDate)
             maxIob.set(0.0, rh.gs(R.string.application_expired), this)
