@@ -7,6 +7,7 @@ import app.aaps.core.data.time.T
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ue.ValueWithUnit
+import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.UserEntryLogger
 import app.aaps.core.interfaces.receivers.ReceiverStatusStore
@@ -49,12 +50,13 @@ class ObjectivesViewModel @Inject constructor(
     private val receiverStatusStore: ReceiverStatusStore,
     private val aapsLogger: AAPSLogger,
     private val uel: UserEntryLogger,
-    private val preferences: Preferences
+    private val preferences: Preferences,
+    private val config: Config
 ) : ViewModel() {
 
     private val scope get() = viewModelScope
 
-    private val _uiState = MutableStateFlow(ObjectivesUiState())
+    private val _uiState = MutableStateFlow(ObjectivesUiState(showDebugControls = config.isEngineeringMode()))
     val uiState: StateFlow<ObjectivesUiState> = _uiState.asStateFlow()
 
     /** Index to auto-scroll to after state update */
