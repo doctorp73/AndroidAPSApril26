@@ -2,10 +2,12 @@ package app.aaps.pump.omnipod.common.bledriver.pod.state
 
 import app.aaps.pump.omnipod.common.bledriver.comm.pair.PairResult
 import app.aaps.pump.omnipod.common.bledriver.comm.session.EapSqn
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlarmType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.DeliveryStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.SoftwareVersion
+import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import java.util.EnumSet
@@ -68,8 +70,22 @@ interface O5PodStateManager {
     /** System.currentTimeMillis() when the last status was received, or null if never. */
     val lastStatusResponseReceived: Long?
 
+    // -- alarm/fault diagnostics, populated from AlarmStatusResponse --------------------
+    // Only fields not already covered by DefaultStatusResponse above - see that response
+    // class's own field overlap with AlarmStatusResponse for why (both report podStatus/
+    // deliveryStatus/pulses/etc; only these are unique to the alarm report).
+
+    val alarmType: AlarmType?
+    /** Pod-clock minutes-since-activation timestamp of when the alarm occurred (not a
+     *  wall-clock time - the pod has no wall clock of its own). */
+    val alarmTime: Short?
+    val occlusionAlarm: Boolean?
+    val podStatusWhenAlarmOccurred: PodStatus?
+    val rssi: Short?
+
     fun updateFromVersionResponse(response: VersionResponse)
     fun updateFromDefaultStatusResponse(response: DefaultStatusResponse)
+    fun updateFromAlarmStatusResponse(response: AlarmStatusResponse)
 
     /**
      * Returns the next EAP-AKA sequence number (as its 6-byte on-wire [EapSqn]
@@ -140,6 +156,17 @@ class InMemoryO5PodStateManager : O5PodStateManager {
     @Volatile override var lastStatusResponseReceived: Long? = null
         private set
 
+    @Volatile override var alarmType: AlarmType? = null
+        private set
+    @Volatile override var alarmTime: Short? = null
+        private set
+    @Volatile override var occlusionAlarm: Boolean? = null
+        private set
+    @Volatile override var podStatusWhenAlarmOccurred: PodStatus? = null
+        private set
+    @Volatile override var rssi: Short? = null
+        private set
+
     override fun increaseEapAkaSequenceNumber(): ByteArray {
         pendingEapAkaSequenceNumber = eapAkaSequenceNumber + 1
         return EapSqn(pendingEapAkaSequenceNumber).value
@@ -177,6 +204,23 @@ class InMemoryO5PodStateManager : O5PodStateManager {
         lastStatusResponseReceived = System.currentTimeMillis()
     }
 
+    override fun updateFromAlarmStatusResponse(response: AlarmStatusResponse) {
+        podStatus = response.podStatus
+        deliveryStatus = response.deliveryStatus
+        totalPulsesDelivered = response.totalPulsesDelivered
+        bolusPulsesRemaining = response.bolusPulsesRemaining
+        reservoirPulsesRemaining = response.reservoirPulsesRemaining
+        activeAlerts = response.activeAlerts
+        minutesSinceActivation = response.minutesSinceActivation
+        sequenceNumberOfLastProgrammingCommand = response.sequenceNumberOfLastProgrammingCommand
+        alarmType = response.alarmType
+        alarmTime = response.alarmTime
+        occlusionAlarm = response.occlusionAlarm
+        podStatusWhenAlarmOccurred = response.podStatusWhenAlarmOccurred
+        rssi = response.rssi
+        lastStatusResponseReceived = System.currentTimeMillis()
+    }
+
     override fun reset() {
         bluetoothConnectionState = O5PodStateManager.BluetoothConnectionState.DISCONNECTED
         connectionAttemptsCounter.set(0)
@@ -201,5 +245,10 @@ class InMemoryO5PodStateManager : O5PodStateManager {
         minutesSinceActivation = null
         sequenceNumberOfLastProgrammingCommand = null
         lastStatusResponseReceived = null
+        alarmType = null
+        alarmTime = null
+        occlusionAlarm = null
+        podStatusWhenAlarmOccurred = null
+        rssi = null
     }
 }

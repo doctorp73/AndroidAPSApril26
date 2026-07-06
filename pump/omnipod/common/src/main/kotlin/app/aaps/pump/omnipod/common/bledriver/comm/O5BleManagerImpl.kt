@@ -35,6 +35,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.session.Session
 import app.aaps.pump.omnipod.common.bledriver.event.PodEvent
 import app.aaps.pump.omnipod.common.bledriver.pod.command.base.Command
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodType
+import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.Response
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
@@ -139,9 +140,10 @@ class O5BleManagerImpl @Inject constructor(
 
     private fun recordStatusIfPresent(response: Response) {
         when (response) {
-            is VersionResponse        -> podState.updateFromVersionResponse(response)
-            is DefaultStatusResponse  -> podState.updateFromDefaultStatusResponse(response)
-            else                      -> Unit // other response types (Nak, SetUniqueId, Alarm) don't carry general status
+            is VersionResponse       -> podState.updateFromVersionResponse(response)
+            is DefaultStatusResponse -> podState.updateFromDefaultStatusResponse(response)
+            is AlarmStatusResponse   -> podState.updateFromAlarmStatusResponse(response)
+            else                     -> Unit // other response types (Nak, SetUniqueId) don't carry general status
         }
     }
 

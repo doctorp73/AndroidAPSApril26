@@ -5,10 +5,12 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.pump.omnipod.common.bledriver.comm.pair.PairResult
 import app.aaps.pump.omnipod.common.bledriver.comm.session.EapSqn
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlarmType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.DeliveryStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.SoftwareVersion
+import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import app.aaps.pump.omnipod.common.keys.O5StringNonPreferenceKey
@@ -122,6 +124,12 @@ class PersistedO5PodStateManager @Inject constructor(
     override val sequenceNumberOfLastProgrammingCommand: Short? get() = podState.sequenceNumberOfLastProgrammingCommand
     override val lastStatusResponseReceived: Long? get() = podState.lastStatusResponseReceived
 
+    override val alarmType: AlarmType? get() = podState.alarmType
+    override val alarmTime: Short? get() = podState.alarmTime
+    override val occlusionAlarm: Boolean? get() = podState.occlusionAlarm
+    override val podStatusWhenAlarmOccurred: PodStatus? get() = podState.podStatusWhenAlarmOccurred
+    override val rssi: Short? get() = podState.rssi
+
     override fun increaseEapAkaSequenceNumber(): ByteArray {
         pendingEapAkaSequenceNumber = eapAkaSequenceNumber + 1
         return EapSqn(pendingEapAkaSequenceNumber).value
@@ -163,6 +171,24 @@ class PersistedO5PodStateManager @Inject constructor(
         podState.activeAlerts = response.activeAlerts
         podState.minutesSinceActivation = response.minutesSinceActivation
         podState.sequenceNumberOfLastProgrammingCommand = response.sequenceNumberOfLastProgrammingCommand
+        podState.lastStatusResponseReceived = System.currentTimeMillis()
+        store()
+    }
+
+    override fun updateFromAlarmStatusResponse(response: AlarmStatusResponse) {
+        podState.podStatus = response.podStatus
+        podState.deliveryStatus = response.deliveryStatus
+        podState.totalPulsesDelivered = response.totalPulsesDelivered
+        podState.bolusPulsesRemaining = response.bolusPulsesRemaining
+        podState.reservoirPulsesRemaining = response.reservoirPulsesRemaining
+        podState.activeAlerts = response.activeAlerts
+        podState.minutesSinceActivation = response.minutesSinceActivation
+        podState.sequenceNumberOfLastProgrammingCommand = response.sequenceNumberOfLastProgrammingCommand
+        podState.alarmType = response.alarmType
+        podState.alarmTime = response.alarmTime
+        podState.occlusionAlarm = response.occlusionAlarm
+        podState.podStatusWhenAlarmOccurred = response.podStatusWhenAlarmOccurred
+        podState.rssi = response.rssi
         podState.lastStatusResponseReceived = System.currentTimeMillis()
         store()
     }
@@ -219,6 +245,11 @@ class PersistedO5PodStateManager @Inject constructor(
         var activeAlerts: EnumSet<AlertType>? = null,
         var minutesSinceActivation: Short? = null,
         var sequenceNumberOfLastProgrammingCommand: Short? = null,
-        var lastStatusResponseReceived: Long? = null
+        var lastStatusResponseReceived: Long? = null,
+        var alarmType: AlarmType? = null,
+        var alarmTime: Short? = null,
+        var occlusionAlarm: Boolean? = null,
+        var podStatusWhenAlarmOccurred: PodStatus? = null,
+        var rssi: Short? = null
     ) : Serializable
 }
