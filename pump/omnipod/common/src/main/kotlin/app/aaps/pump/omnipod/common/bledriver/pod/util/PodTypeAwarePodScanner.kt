@@ -55,6 +55,7 @@ class PodTypeAwarePodScanner(
     @Throws(InterruptedException::class, ScanException::class)
     fun scanForPod(podType: PodType, expectedPodId: Long? = null): PodTypeAwareDiscoveredDevice {
         val scanner = bluetoothAdapter.bluetoothLeScanner
+            ?: throw ScanException("BluetoothLeScanner not available (Bluetooth may be off or unsupported)")
         val filter = ScanFilter.Builder()
             .setServiceUuid(ParcelUuid.fromString(BluetoothServiceUuids.unpairedAdvertisementUuid(podType)))
             .build()

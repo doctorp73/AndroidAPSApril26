@@ -5,17 +5,23 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.pump.omnipod.common.bledriver.comm.pair.PairResult
 import app.aaps.pump.omnipod.common.bledriver.comm.session.EapSqn
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.DeliveryStatus
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodStatus
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.SoftwareVersion
+import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import app.aaps.pump.omnipod.common.keys.O5StringNonPreferenceKey
 import com.google.gson.Gson
 import java.io.Serializable
+import java.util.EnumSet
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * [O5PodStateManager] persisted across app restarts, mirroring
  * [OmnipodDashPodStateManagerImpl]'s Gson + [Preferences] store/load pattern exactly -
- * just for O5's much smaller state surface (see [O5PodStateManager]'s class doc for why
- * it's smaller than Dash's).
+ * just for O5's smaller state surface (see [O5PodStateManager]'s class doc for why).
  */
 @Singleton
 class PersistedO5PodStateManager @Inject constructor(
@@ -102,6 +108,20 @@ class PersistedO5PodStateManager @Inject constructor(
 
     private var pendingEapAkaSequenceNumber: Long = 0
 
+    override val podStatus: PodStatus? get() = podState.podStatus
+    override val deliveryStatus: DeliveryStatus? get() = podState.deliveryStatus
+    override val firmwareVersion: SoftwareVersion? get() = podState.firmwareVersion
+    override val bleVersion: SoftwareVersion? get() = podState.bleVersion
+    override val lotNumber: Long? get() = podState.lotNumber
+    override val podSequenceNumber: Long? get() = podState.podSequenceNumber
+    override val totalPulsesDelivered: Short? get() = podState.totalPulsesDelivered
+    override val bolusPulsesRemaining: Short? get() = podState.bolusPulsesRemaining
+    override val reservoirPulsesRemaining: Short? get() = podState.reservoirPulsesRemaining
+    override val activeAlerts: EnumSet<AlertType>? get() = podState.activeAlerts
+    override val minutesSinceActivation: Short? get() = podState.minutesSinceActivation
+    override val sequenceNumberOfLastProgrammingCommand: Short? get() = podState.sequenceNumberOfLastProgrammingCommand
+    override val lastStatusResponseReceived: Long? get() = podState.lastStatusResponseReceived
+
     override fun increaseEapAkaSequenceNumber(): ByteArray {
         pendingEapAkaSequenceNumber = eapAkaSequenceNumber + 1
         return EapSqn(pendingEapAkaSequenceNumber).value
@@ -117,6 +137,33 @@ class PersistedO5PodStateManager @Inject constructor(
         podState.podId = podId
         podState.ltk = pairResult.ltk
         podState.msgSequenceNumber = pairResult.msgSeq
+        store()
+    }
+
+    override fun updateFromVersionResponse(response: VersionResponse) {
+        podState.podStatus = response.podStatus
+        podState.firmwareVersion = SoftwareVersion(
+            response.firmwareVersionMajor, response.firmwareVersionMinor, response.firmwareVersionInterim
+        )
+        podState.bleVersion = SoftwareVersion(
+            response.bleVersionMajor, response.bleVersionMinor, response.bleVersionInterim
+        )
+        podState.lotNumber = response.lotNumber
+        podState.podSequenceNumber = response.podSequenceNumber
+        podState.lastStatusResponseReceived = System.currentTimeMillis()
+        store()
+    }
+
+    override fun updateFromDefaultStatusResponse(response: DefaultStatusResponse) {
+        podState.podStatus = response.podStatus
+        podState.deliveryStatus = response.deliveryStatus
+        podState.totalPulsesDelivered = response.totalPulsesDelivered
+        podState.bolusPulsesRemaining = response.bolusPulsesRemaining
+        podState.reservoirPulsesRemaining = response.reservoirPulsesRemaining
+        podState.activeAlerts = response.activeAlerts
+        podState.minutesSinceActivation = response.minutesSinceActivation
+        podState.sequenceNumberOfLastProgrammingCommand = response.sequenceNumberOfLastProgrammingCommand
+        podState.lastStatusResponseReceived = System.currentTimeMillis()
         store()
     }
 
@@ -159,6 +206,19 @@ class PersistedO5PodStateManager @Inject constructor(
         var podId: Long? = null,
         var ltk: ByteArray? = null,
         var msgSequenceNumber: Byte = 1,
-        var eapAkaSequenceNumber: Long = 0
+        var eapAkaSequenceNumber: Long = 0,
+        var podStatus: PodStatus? = null,
+        var deliveryStatus: DeliveryStatus? = null,
+        var firmwareVersion: SoftwareVersion? = null,
+        var bleVersion: SoftwareVersion? = null,
+        var lotNumber: Long? = null,
+        var podSequenceNumber: Long? = null,
+        var totalPulsesDelivered: Short? = null,
+        var bolusPulsesRemaining: Short? = null,
+        var reservoirPulsesRemaining: Short? = null,
+        var activeAlerts: EnumSet<AlertType>? = null,
+        var minutesSinceActivation: Short? = null,
+        var sequenceNumberOfLastProgrammingCommand: Short? = null,
+        var lastStatusResponseReceived: Long? = null
     ) : Serializable
 }
