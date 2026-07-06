@@ -1,4 +1,4 @@
-﻿package app.aaps.pump.omnipod.common.bledriver.pod.util
+package app.aaps.pump.omnipod.common.bledriver.pod.util
 
 import java.math.BigInteger
 import java.security.KeyPairGenerator
@@ -15,7 +15,8 @@ import javax.crypto.KeyAgreement
  * Ported from OmnipodKit's P256KeyGenerator.swift (loopandlearn/OmnipodKit), which wraps
  * Apple's CryptoKit P256.KeyAgreement. There is no equivalent to CryptoKit available on
  * Android, so this uses the standard java.security / javax.crypto EC APIs directly, via
- * the shared raw-key encode/decode helpers in [P256Codec].
+ * the shared raw-key encode/decode helpers in [P256Codec] (see that file's doc comment
+ * for why public keys here are 64 raw bytes, not 65).
  *
  * The shared secret returned by [computeSharedSecret] is the raw ECDH result (the X
  * coordinate of the agreed point), matching CryptoKit's `sharedSecretFromKeyAgreement`,
@@ -32,6 +33,7 @@ class P256KeyGenerator {
         with(P256Codec) { return privateKey.s.toFixedLengthBytes(P256Codec.SCALAR_LENGTH_BYTES) }
     }
 
+    /** Returns the raw 64-byte (X || Y, no 0x04 prefix) public key. */
     fun publicFromPrivate(privateKey: ByteArray): ByteArray {
         require(privateKey.size == P256Codec.SCALAR_LENGTH_BYTES) {
             "P-256 private key scalar must be ${P256Codec.SCALAR_LENGTH_BYTES} bytes, got ${privateKey.size}"
