@@ -329,6 +329,59 @@ class CommandEncodingTest : TestBase() {
         assertCrcMatches(encoded, crcOffset = 25)
     }
 
+    // -- SetUniqueIdCommand ---------------------------------------------------------------------
+    //
+    // Assigns the pod's address during activation. No dosing math - purely identity/timestamp
+    // assignment. Notably, the message HEADER uses a placeholder address (the pod has no real
+    // address to address it BY yet), while the BODY carries the real address being assigned.
+
+    @Test
+    fun `SetUniqueIdCommand encodes to the documented 29-byte layout`() {
+        val targetUniqueId = 0x12345678
+        val sequenceNumber: Short = 7
+        val lotNumber = 123456
+        val podSequenceNumber = 654321
+
+        val cal = java.util.Calendar.getInstance()
+        cal.set(2024, java.util.Calendar.MARCH, 15, 10, 30, 0)
+
+        val cmd = SetUniqueIdCommand.Builder()
+            .setUniqueId(targetUniqueId)
+            .setSequenceNumber(sequenceNumber)
+            .setLotNumber(lotNumber)
+            .setPodSequenceNumber(podSequenceNumber)
+            .setInitializationTime(cal.time)
+            .build()
+
+        val encoded = cmd.encoded
+
+        // HEADER(6) + [type+bodyLen+uniqueId(4)+0x14+0x04+initTime(5)+lotNumber(4)+podSeqNum(4)](21) + CRC(2) = 29
+        assertThat(encoded.size).isEqualTo(29)
+
+        // Header address (bytes 0-3) is the placeholder 0xFFFFFFFF, not the target uniqueId.
+        assertThat(readInt(encoded, 0)).isEqualTo(-1)
+
+        assertThat(encoded[6]).isEqualTo(0x03.toByte()) // CommandType.SET_UNIQUE_ID
+
+        // Body (bytes 8-11) carries the REAL target uniqueId being assigned.
+        assertThat(readInt(encoded, 8)).isEqualTo(targetUniqueId)
+
+        assertThat(encoded[12]).isEqualTo(0x14.toByte())
+        assertThat(encoded[13]).isEqualTo(0x04.toByte())
+
+        // Initialization time: month, day, year%100, hour, minute
+        assertThat(encoded[14]).isEqualTo(3.toByte())  // March
+        assertThat(encoded[15]).isEqualTo(15.toByte())
+        assertThat(encoded[16]).isEqualTo(24.toByte()) // 2024 % 100
+        assertThat(encoded[17]).isEqualTo(10.toByte())
+        assertThat(encoded[18]).isEqualTo(30.toByte())
+
+        assertThat(readInt(encoded, 19)).isEqualTo(lotNumber)
+        assertThat(readInt(encoded, 23)).isEqualTo(podSequenceNumber)
+
+        assertCrcMatches(encoded, crcOffset = 27)
+    }
+
     // -- shared helpers --------------------------------------------------------------------------
 
     private fun readInt(bytes: ByteArray, offset: Int): Int =
