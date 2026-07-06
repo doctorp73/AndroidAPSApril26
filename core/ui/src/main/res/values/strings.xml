@@ -339,6 +339,7 @@
     <string name="profile_management">Profile</string>
     <string name="careportal_snackbolus">Snack Bolus</string>
     <string name="careportal_mealbolus">Meal Bolus</string>
+    <string name="afrezza_type_shortname">Afrezza</string>
     <string name="careportal_correctionbolus">Correction Bolus</string>
     <string name="careportal_combobolus">Combo Bolus</string>
     <string name="careportal_tempbasalstart">Temp Basal Start</string>
