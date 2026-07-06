@@ -8,6 +8,7 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import javax.inject.Inject
 
 /**
  * Encrypts/decrypts small byte payloads (here, serialized O5 registration data) using an
@@ -41,9 +42,9 @@ interface O5RegistrationCipher {
     fun decrypt(encoded: String): ByteArray
 }
 
-class AndroidKeystoreAesCipher(
+class AndroidKeystoreAesCipher @Inject constructor() : O5RegistrationCipher {
+
     private val keyAlias: String = DEFAULT_KEY_ALIAS
-) : O5RegistrationCipher {
 
     private val keyStore: KeyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
 
