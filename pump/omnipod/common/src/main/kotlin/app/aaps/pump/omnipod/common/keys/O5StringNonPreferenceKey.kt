@@ -12,4 +12,8 @@ enum class O5StringNonPreferenceKey(
 ) : StringNonPreferenceKey {
 
     PodState("AAPS.Omnipod5.pod_state", ""),
+
+    /** Holds Keystore-encrypted O5 registration (credential) data - never exported, since
+     *  unlike pod connection state, this contains actual key material. */
+    RegistrationData("AAPS.Omnipod5.registration_data_encrypted", "", exportable = false),
 }

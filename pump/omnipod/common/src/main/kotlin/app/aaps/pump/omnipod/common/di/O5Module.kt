@@ -2,6 +2,8 @@ package app.aaps.pump.omnipod.common.di
 
 import app.aaps.pump.omnipod.common.bledriver.comm.O5BleManager
 import app.aaps.pump.omnipod.common.bledriver.comm.O5BleManagerImpl
+import app.aaps.pump.omnipod.common.bledriver.pod.security.AndroidKeystoreAesCipher
+import app.aaps.pump.omnipod.common.bledriver.pod.security.O5RegistrationCipher
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
 import app.aaps.pump.omnipod.common.bledriver.pod.state.PersistedO5PodStateManager
 import dagger.Binds
@@ -19,6 +21,13 @@ import dagger.hilt.components.SingletonComponent
  * nothing to bind there. This module makes the pairing/session/command/persistence layers
  * built so far reachable via injection; it's a deliberately incomplete step, not a finished
  * plugin registration.
+ *
+ * Also deliberately does NOT yet wire
+ * [SecureO5RegistrationStorage][app.aaps.pump.omnipod.common.bledriver.pod.security
+ * .SecureO5RegistrationStorage]'s `loadAndInstallAll()` into any actual app-startup path -
+ * there's no settings UI yet that could produce an imported credential for it to load, so
+ * there's nothing to call it from. That call needs to happen once, early, wherever this
+ * app's equivalent of "on process start" lives, before any O5 pairing/connection code runs.
  *
  * [O5BleConnectionFactory][app.aaps.pump.omnipod.common.bledriver.comm.legacy
  * .O5BleConnectionFactory] and [P256KeyGenerator][app.aaps.pump.omnipod.common.bledriver
@@ -38,4 +47,7 @@ abstract class O5Module {
 
     @Binds
     abstract fun bindsPersistedO5PodStateManager(podStateManager: PersistedO5PodStateManager): O5PodStateManager
+
+    @Binds
+    abstract fun bindsAndroidKeystoreAesCipher(cipher: AndroidKeystoreAesCipher): O5RegistrationCipher
 }
