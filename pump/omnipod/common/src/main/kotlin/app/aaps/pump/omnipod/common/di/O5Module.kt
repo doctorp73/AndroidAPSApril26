@@ -22,12 +22,12 @@ import dagger.hilt.components.SingletonComponent
  * built so far reachable via injection; it's a deliberately incomplete step, not a finished
  * plugin registration.
  *
- * Also deliberately does NOT yet wire
  * [SecureO5RegistrationStorage][app.aaps.pump.omnipod.common.bledriver.pod.security
- * .SecureO5RegistrationStorage]'s `loadAndInstallAll()` into any actual app-startup path -
- * there's no settings UI yet that could produce an imported credential for it to load, so
- * there's nothing to call it from. That call needs to happen once, early, wherever this
- * app's equivalent of "on process start" lives, before any O5 pairing/connection code runs.
+ * .SecureO5RegistrationStorage]'s `loadAndInstallAll()` is called from
+ * [O5BleManagerImpl][app.aaps.pump.omnipod.common.bledriver.comm.O5BleManagerImpl]'s
+ * `init` block, since that class must be constructed before any pairing/connection code
+ * can run - this avoids needing a separate, broader app-startup hook. There's still no
+ * settings UI that could actually produce an imported credential for it to load, though.
  *
  * [O5BleConnectionFactory][app.aaps.pump.omnipod.common.bledriver.comm.legacy
  * .O5BleConnectionFactory] and [P256KeyGenerator][app.aaps.pump.omnipod.common.bledriver

@@ -39,6 +39,7 @@ import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.Response
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
+import app.aaps.pump.omnipod.common.bledriver.pod.security.SecureO5RegistrationStorage
 import app.aaps.pump.omnipod.common.bledriver.pod.util.P256KeyGenerator
 import app.aaps.pump.omnipod.common.bledriver.pod.util.PodTypeAwarePodScanner
 import io.reactivex.rxjava3.core.Observable
@@ -59,6 +60,9 @@ import kotlin.reflect.KClass
  * in (see [app.aaps.pump.omnipod.common.bledriver.pod.command.base.HeaderEnabledCommand],
  * which only needs a generic `uniqueId: Int` supplied externally). Only pairing and
  * connection setup actually differ between the two pod types.
+ *
+ * Also restores previously-imported credentials (via [SecureO5RegistrationStorage]) into
+ * [O5RegistrationData]'s in-memory registry on construction - see the `init` block below.
  */
 @Singleton
 class O5BleManagerImpl @Inject constructor(
@@ -68,8 +72,18 @@ class O5BleManagerImpl @Inject constructor(
     private val context: Context,
     private val bleConnectionFactory: O5BleConnectionFactory,
     private val bleDeviceManager: BleDeviceManager,
+    private val secureO5RegistrationStorage: SecureO5RegistrationStorage,
     private val p256KeyGenerator: P256KeyGenerator
 ) : O5BleManager {
+
+    init {
+        // Restore any previously-imported credentials into O5RegistrationData's in-memory
+        // registry before this class can be used for anything - O5BleManagerImpl must be
+        // constructed before pairNewPod()/connect() can be called on it, so this guarantees
+        // registration data is available by the time it's actually needed, without requiring
+        // a separate app-startup hook.
+        secureO5RegistrationStorage.loadAndInstallAll()
+    }
 
     private val busy = AtomicBoolean(false)
     private var connection: BleConnection? = null
