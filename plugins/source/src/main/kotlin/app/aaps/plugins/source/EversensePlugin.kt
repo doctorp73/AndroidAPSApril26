@@ -130,15 +130,6 @@ class EversensePlugin @Inject constructor(
     @Volatile private var reconnectLoopActive: Boolean = false
     @Volatile private var releaseReconnectAttempts: Int = 0
 
-    // FIX: cooldown to avoid tearing down a connection that is still mid-handshake right
-    // after a previous forced GATT reset. Without this, a disconnect that happens shortly
-    // after reconnecting (e.g. the transmitter still settling after an extended BT-off
-    // period) would trigger another eversense.disconnect() here, interrupting the
-    // transmitter's own reconnect before it could complete - producing an unbroken
-    // connect/disconnect storm that never stabilizes.
-    @Volatile private var lastForcedResetTimestamp: Long = 0L
-    private val FORCED_RESET_COOLDOWN_MS = 8_000L
-
     override suspend fun onStart() {
         super.onStart()
         ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -262,18 +253,6 @@ class EversensePlugin @Inject constructor(
             aapsLogger.debug(LTag.BGSOURCE, "Aggressive reconnect already in progress - not starting another")
             return
         }
-        val now = System.currentTimeMillis()
-        val sinceLastReset = now - lastForcedResetTimestamp
-        if (sinceLastReset < FORCED_RESET_COOLDOWN_MS) {
-            // A forced reset happened very recently - this disconnect is likely the transmitter
-            // still settling from that reset (or briefly renegotiating after coming back into
-            // range), not a genuinely new failure. Tearing down again here would interrupt its
-            // own reconnect handshake and can produce an unbroken connect/disconnect storm.
-            // Let the in-flight connect attempt continue instead of forcing another GATT reset.
-            aapsLogger.debug(LTag.BGSOURCE, "Disconnect detected within ${sinceLastReset}ms of last forced reset - skipping reset, letting reconnect continue")
-            return
-        }
-        lastForcedResetTimestamp = now
         reconnectLoopActive = true
         releaseForOfficialApp = true
         releaseReconnectAttempts = 0
