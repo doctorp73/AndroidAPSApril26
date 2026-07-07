@@ -121,15 +121,6 @@ class EversensePlugin @Inject constructor(
     private var releaseForOfficialApp: Boolean = false
     @Volatile private var placementNotificationSnoozed: Boolean = false
 
-    // FIX 14: Aggressive-reconnect backstop. onConnectionChanged(false) previously only
-    // logged - nothing actually forced a retry when the low-level GATT backoff/watchdog
-    // stalled out (e.g. because the official Eversense app grabbed the BLE connection
-    // first, or because AAPS believed it was already connected via isConnected() and
-    // silently no-opped on every connect() call). This guard prevents overlapping loops
-    // when onConnectionChanged fires repeatedly during connection churn.
-    @Volatile private var reconnectLoopActive: Boolean = false
-    @Volatile private var releaseReconnectAttempts: Int = 0
-
     override suspend fun onStart() {
         super.onStart()
         ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -242,51 +233,21 @@ class EversensePlugin @Inject constructor(
         icon = pluginDescription.icon
     )
 
-    // FIX 14: Immediately force-tears-down any GATT state (stale/zombie or otherwise) the
-    // moment a disconnect is observed, then starts the graduated-backoff retry loop below.
-    // eversense.disconnect() is a safe no-op if AAPS was not actually in a connected state,
-    // and forcibly resets connected/transmitterReady if it was - covering the case where
-    // AAPS believes it is fully connected (isConnected() == true) but the link is dead,
-    // which would otherwise cause connect() to silently no-op forever.
-    private fun triggerAggressiveReconnect() {
-        if (reconnectLoopActive) {
-            aapsLogger.debug(LTag.BGSOURCE, "Aggressive reconnect already in progress - not starting another")
-            return
-        }
-        reconnectLoopActive = true
-        releaseForOfficialApp = true
-        releaseReconnectAttempts = 0
-        aapsLogger.info(LTag.BGSOURCE, "Disconnect detected - forcing GATT reset and reconnecting immediately")
-        ioScope.launch {
-            eversense.disconnect()
-            startOfficialAppReleaseReconnectLoop()
-        }
-    }
-
     private fun startOfficialAppReleaseReconnectLoop() {
-        if (!releaseForOfficialApp) {
-            reconnectLoopActive = false
-            return
-        }
-        aapsLogger.info(LTag.BGSOURCE, "Release mode - attempting reconnect (attempt ${releaseReconnectAttempts + 1})")
+        if (!releaseForOfficialApp) return
+        aapsLogger.info(LTag.BGSOURCE, "Release mode — attempting reconnect")
         ioScope.launch {
             eversense.connect(null)
             mainHandler.postDelayed({
                 if (eversense.isConnected()) {
                     aapsLogger.info(LTag.BGSOURCE, "Reconnected after official app release")
                     releaseForOfficialApp = false
-                    reconnectLoopActive = false
-                    releaseReconnectAttempts = 0
                     mainHandler.post {
                         notificationManager.dismiss(NotificationId.EVERSENSE_RELEASE)
                     }
                 } else {
-                    // FIX 14: graduated backoff instead of a flat 5 minutes - retries fast at
-                    // first (15s, 30s, 60s, 2min, 4min) then caps at 5 minutes indefinitely.
-                    val attempt = releaseReconnectAttempts++
-                    val retryDelayMs = minOf(15_000L * (1L shl minOf(attempt, 5)), 300_000L)
-                    aapsLogger.info(LTag.BGSOURCE, "Reconnect failed - retrying in ${retryDelayMs / 1000}s")
-                    mainHandler.postDelayed({ startOfficialAppReleaseReconnectLoop() }, retryDelayMs)
+                    aapsLogger.info(LTag.BGSOURCE, "Reconnect failed — retrying in 5 minutes")
+                    mainHandler.postDelayed({ startOfficialAppReleaseReconnectLoop() }, 300000L)
                 }
             }, 10000L)
         }
@@ -423,15 +384,7 @@ class EversensePlugin @Inject constructor(
     }
 
     override fun onConnectionChanged(connected: Boolean) {
-        aapsLogger.info(LTag.BGSOURCE, "Connection changed - connected: $connected")
-        if (connected) {
-            // FIX 14: real connection achieved - stop the backstop loop and reset its backoff.
-            reconnectLoopActive = false
-            releaseForOfficialApp = false
-            releaseReconnectAttempts = 0
-        } else {
-            triggerAggressiveReconnect()
-        }
+        aapsLogger.info(LTag.BGSOURCE, "Connection changed — connected: $connected")
     }
 
     override fun onTransmitterReady() {
