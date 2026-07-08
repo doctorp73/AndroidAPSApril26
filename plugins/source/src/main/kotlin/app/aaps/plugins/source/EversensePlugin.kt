@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import androidx.appcompat.app.AlertDialog
+import androidx.core.net.toUri
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import app.aaps.core.interfaces.configuration.Config
@@ -226,6 +227,14 @@ class EversensePlugin @Inject constructor(
                 }
                 saveSecureState(cleared)
                 aapsLogger.info(LTag.BGSOURCE, "Eversense credentials cleared by user")
+            },
+            EversenseIntentKey.EversenseDocumentation.withClick {
+                val intent = Intent(
+                    Intent.ACTION_VIEW,
+                    "https://github.com/CAPTCG/AndroidAPS-Eversense-Afrezza-Docs/blob/main/README.md".toUri()
+                )
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
             },
             EversenseIntentKey.EversenseCalibration.withActivity(EversenseCalibrationActivity::class.java as Class<*>),
             EversenseIntentKey.EversensePlacement.withActivity(EversensePlacementActivity::class.java as Class<*>)
