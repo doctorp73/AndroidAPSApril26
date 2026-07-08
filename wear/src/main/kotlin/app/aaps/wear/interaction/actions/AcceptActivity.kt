@@ -444,7 +444,7 @@ private fun WizardDetailPage(detail: EventData.WizardDetail, correctionSteps: In
                                 .clip(CircleShape)
                                 .background(when {
                                     correctionSteps < 0 -> WearInsulinNegative
-                                    canDecrease         -> WearCalcCardBg
+                                    canDecrease         -> InsulinBlue.copy(alpha = 0.25f)
                                     else                -> Color(0xFF303030)
                                 })
                                 .clickable(enabled = canDecrease) {
@@ -485,7 +485,7 @@ private fun WizardDetailPage(detail: EventData.WizardDetail, correctionSteps: In
                                 .clip(CircleShape)
                                 .background(when {
                                     correctionSteps > 0 -> WearInsulinPositive
-                                    canIncrease         -> WearCalcCardBg
+                                    canIncrease         -> InsulinBlue.copy(alpha = 0.25f)
                                     else                -> Color(0xFF303030)
                                 })
                                 .clickable(enabled = canIncrease) {
@@ -594,7 +594,7 @@ private fun WizardDetailPage(detail: EventData.WizardDetail, correctionSteps: In
                     if (newIob != null) {
                         Text(
                             text = stringResource(R.string.wizard_result_new_iob, fmt2.format(newIob)),
-                            color = Color(0xFF90A4AE),
+                            color = WearSecondaryText,
                             fontSize = 11.sp,
                         )
                     }
