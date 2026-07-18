@@ -180,4 +180,18 @@
         <item quantity="one">Pod Alert: %1$s</item>
         <item quantity="other">Pod Alerts: %1$s</item>
     </plurals>
+
+    <!-- Omnipod 5 -->
+    <string name="omnipod_5_name">Omnipod 5</string>
+    <string name="omnipod_5_name_short">O5</string>
+    <string name="omnipod_5_pump_description">Omnipod 5 patch pump, running as a manual pod under AAPS\'s control.</string>
+    <string name="omnipod_5_error_not_enough_insulin">Not enough insulin left in the reservoir for this bolus.</string>
+    <string name="omnipod_5_error_bolus_already_in_progress">A bolus is already in progress.</string>
+    <string name="omnipod_5_error_setting_basal_profile_might_have_failed">Setting the new basal profile might have failed. Refresh pod status to confirm or deny this.</string>
+    <string name="omnipod_5_error_uncertain_smb" comment="%1$s=requested SMB amount in units, e.g. 0.55">Unable to verify whether the SMB bolus (%1$s U) succeeded. Refresh pod status to confirm or deny this command.</string>
+    <string name="omnipod_5_error_bolus_delivery_status_uncertain">Bolus delivery status is uncertain. Refresh pod status to confirm or deny this command.</string>
+    <string name="omnipod_5_error_setting_temp_basal_might_have_failed">Setting the temp basal might have failed. Refresh pod status to confirm or deny this.</string>
+    <string name="omnipod_5_error_cancel_temp_basal_result_is_uncertain">Cancelling the temp basal result is uncertain. Refresh pod status to confirm or deny this.</string>
+    <string name="omnipod_5_error_extended_bolus_not_supported">Omnipod 5 driver does not support extended boluses</string>
+    <string name="omnipod_5_error_tdd_not_supported">Omnipod 5 driver does not support TDD</string>
 </resources>

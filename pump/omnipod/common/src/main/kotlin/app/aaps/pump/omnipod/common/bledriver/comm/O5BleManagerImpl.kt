@@ -107,21 +107,27 @@ class O5BleManagerImpl @Inject constructor(
                         return@create
                     }
 
-                    is CommandSendSuccess         ->
+                    is CommandSendSuccess         -> {
                         emitter.onNext(PodEvent.CommandSent(cmd))
+                        podState.increaseMessageSequenceNumber()
+                    }
 
-                    is CommandSendErrorConfirming ->
+                    is CommandSendErrorConfirming -> {
                         emitter.onNext(PodEvent.CommandSendNotConfirmed(cmd))
+                        podState.increaseMessageSequenceNumber()
+                    }
                 }
                 when (val readResult = session.readAndAckResponse()) {
                     is CommandReceiveSuccess -> {
                         recordStatusIfPresent(readResult.result)
                         emitter.onNext(PodEvent.ResponseReceived(cmd, readResult.result))
+                        podState.increaseMessageSequenceNumber()
                     }
 
                     is CommandAckError       -> {
                         recordStatusIfPresent(readResult.result)
                         emitter.onNext(PodEvent.ResponseReceived(cmd, readResult.result))
+                        podState.increaseMessageSequenceNumber()
                     }
 
                     is CommandReceiveError   -> {

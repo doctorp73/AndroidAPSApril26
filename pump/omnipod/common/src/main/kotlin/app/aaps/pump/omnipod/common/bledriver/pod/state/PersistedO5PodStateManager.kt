@@ -7,6 +7,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.pair.PairResult
 import app.aaps.pump.omnipod.common.bledriver.comm.session.EapSqn
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlarmType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.BasalProgram
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.DeliveryStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.SoftwareVersion
@@ -109,6 +110,74 @@ class PersistedO5PodStateManager @Inject constructor(
         }
 
     private var pendingEapAkaSequenceNumber: Long = 0
+
+    override fun increaseMessageSequenceNumber() {
+        podState.msgSequenceNumber = ((podState.msgSequenceNumber.toInt() + 1) and 0x0f).toByte()
+        store()
+    }
+
+    override var basalProgram: BasalProgram?
+        get() = podState.basalProgram
+        set(value) {
+            podState.basalProgram = value
+            store()
+        }
+
+    override var deliverySuspended: Boolean
+        get() = podState.deliverySuspended
+        set(value) {
+            podState.deliverySuspended = value
+            store()
+        }
+
+    override var lastBolusStartTime: Long?
+        get() = podState.lastBolusStartTime
+        set(value) {
+            podState.lastBolusStartTime = value
+            store()
+        }
+
+    override var lastBolusRequestedUnits: Double?
+        get() = podState.lastBolusRequestedUnits
+        set(value) {
+            podState.lastBolusRequestedUnits = value
+            store()
+        }
+
+    override var lastBolusDeliveredUnits: Double?
+        get() = podState.lastBolusDeliveredUnits
+        set(value) {
+            podState.lastBolusDeliveredUnits = value
+            store()
+        }
+
+    override var activeTempBasalStartTime: Long?
+        get() = podState.activeTempBasalStartTime
+        set(value) {
+            podState.activeTempBasalStartTime = value
+            store()
+        }
+
+    override var activeTempBasalRate: Double?
+        get() = podState.activeTempBasalRate
+        set(value) {
+            podState.activeTempBasalRate = value
+            store()
+        }
+
+    override var activeTempBasalDurationMinutes: Short?
+        get() = podState.activeTempBasalDurationMinutes
+        set(value) {
+            podState.activeTempBasalDurationMinutes = value
+            store()
+        }
+
+    override var pendingDoseCommand: O5PodStateManager.PendingDoseCommand?
+        get() = podState.pendingDoseCommand
+        set(value) {
+            podState.pendingDoseCommand = value
+            store()
+        }
 
     override val podStatus: PodStatus? get() = podState.podStatus
     override val deliveryStatus: DeliveryStatus? get() = podState.deliveryStatus
@@ -233,6 +302,15 @@ class PersistedO5PodStateManager @Inject constructor(
         var ltk: ByteArray? = null,
         var msgSequenceNumber: Byte = 1,
         var eapAkaSequenceNumber: Long = 0,
+        var basalProgram: BasalProgram? = null,
+        var deliverySuspended: Boolean = false,
+        var lastBolusStartTime: Long? = null,
+        var lastBolusRequestedUnits: Double? = null,
+        var lastBolusDeliveredUnits: Double? = null,
+        var activeTempBasalStartTime: Long? = null,
+        var activeTempBasalRate: Double? = null,
+        var activeTempBasalDurationMinutes: Short? = null,
+        var pendingDoseCommand: O5PodStateManager.PendingDoseCommand? = null,
         var podStatus: PodStatus? = null,
         var deliveryStatus: DeliveryStatus? = null,
         var firmwareVersion: SoftwareVersion? = null,

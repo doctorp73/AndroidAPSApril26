@@ -1,24 +1,32 @@
 package app.aaps.pump.omnipod.common.bledriver.pod.state
 
+import app.aaps.core.data.model.BS
 import app.aaps.pump.omnipod.common.bledriver.comm.pair.PairResult
 import app.aaps.pump.omnipod.common.bledriver.comm.session.EapSqn
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlarmType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.BasalProgram
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.DeliveryStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.SoftwareVersion
 import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
+import java.io.Serializable
 import java.util.EnumSet
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Persisted/in-memory state needed to connect to, pair with, and read status from an
- * Omnipod 5 pod. Deliberately smaller than [OmnipodDashPodStateManager] - it covers
- * connection lifecycle, pairing/session state, and read-only pod status, but not
- * delivery-affecting state (basal programs, active commands, tempBasal, etc.), since that
- * belongs to a future O5 dosing/control layer, not this one.
+ * Omnipod 5 pod, plus the dosing/control state ([O5PumpPlugin][app.aaps.pump.omnipod
+ * .common.O5PumpPlugin] needs to track basal program, last bolus, active temp basal, and
+ * an in-flight dose command whose outcome is still uncertain (BLE response never
+ * arrived) so it can be reconciled on the next status poll. Deliberately does NOT use a
+ * Dash-style historyId/persisted-ledger ([OmnipodDashPodStateManager.ActiveCommand])
+ * to track in-flight commands - [app.aaps.pump.omnipod.common.bledriver.comm
+ * .O5BleManager.sendCommand] already gives 1:1 request/response correlation per call
+ * (unlike Dash's continuous connection-scoped event bus), so [pendingDoseCommand] only
+ * needs to be a single flat marker, not a ledger.
  *
  * [updateFromVersionResponse] and [updateFromDefaultStatusResponse] are read-only status
  * updates - reused directly from [VersionResponse]/[DefaultStatusResponse], which turned
@@ -50,7 +58,60 @@ interface O5PodStateManager {
     /** Message sequence number to resume from after pairing/reconnection. */
     var msgSequenceNumber: Byte
 
+    /** Advances [msgSequenceNumber] by one, wrapping at 4 bits (0x0-0xf) - the pod's
+     *  command-header sequence number, distinct from the BLE-packet-level session
+     *  sequence number the [app.aaps.pump.omnipod.common.bledriver.comm.session.Session]
+     *  layer manages on its own. Must be called after every command round trip (sent,
+     *  send-unconfirmed, or response received) or the pod will NAK every command after
+     *  the first in a session - mirrors [OmnipodDashPodStateManager
+     *  .increaseMessageSequenceNumber]. */
+    fun increaseMessageSequenceNumber()
+
     var eapAkaSequenceNumber: Long
+
+    // -- dosing/control state ------------------------------------------------------------
+
+    /** The basal program currently believed to be running on the pod. */
+    var basalProgram: BasalProgram?
+
+    /** True while the pod's delivery is suspended (no basal/temp basal delivery). */
+    var deliverySuspended: Boolean
+
+    var lastBolusStartTime: Long?
+    var lastBolusRequestedUnits: Double?
+
+    /** Null until the bolus is confirmed delivered (fully or partially - see
+     *  [app.aaps.pump.omnipod.common.O5PumpPlugin]'s bolus-completion polling). */
+    var lastBolusDeliveredUnits: Double?
+
+    var activeTempBasalStartTime: Long?
+    var activeTempBasalRate: Double?
+    var activeTempBasalDurationMinutes: Short?
+
+    /**
+     * A single dose-affecting command whose outcome is not yet confirmed - set
+     * optimistically right before the [app.aaps.pump.omnipod.common.bledriver.comm
+     * .O5BleManager.sendCommand] `Observable` for a bolus/temp-basal/basal-program
+     * command is subscribed, and cleared once the next status response confirms (or
+     * denies) it actually took effect. This is the field that makes uncertain BLE
+     * outcomes (dose sent but response never arrived) recoverable rather than silently
+     * lost - see [app.aaps.pump.omnipod.common.O5PumpPlugin]'s reconciliation logic.
+     */
+    var pendingDoseCommand: PendingDoseCommand?
+
+    enum class PendingDoseType { BOLUS, TEMP_BASAL_START, TEMP_BASAL_CANCEL, BASAL_PROGRAM }
+
+    data class PendingDoseCommand(
+        val type: PendingDoseType,
+        val requestedUnits: Double? = null,
+        val requestedRate: Double? = null,
+        val requestedDurationMinutes: Short? = null,
+        /** Only set for [PendingDoseType.BOLUS] - needed to correctly finalize
+         *  [app.aaps.core.interfaces.pump.PumpSync.syncBolusWithPumpId] if the original
+         *  call never reached its own sync step. */
+        val bolusType: BS.Type? = null,
+        val startedAt: Long
+    ) : Serializable
 
     // -- read-only pod status, populated from VersionResponse / DefaultStatusResponse ----
 
@@ -128,6 +189,20 @@ class InMemoryO5PodStateManager : O5PodStateManager {
 
     @Volatile override var eapAkaSequenceNumber: Long = 0
     @Volatile private var pendingEapAkaSequenceNumber: Long = 0
+
+    @Volatile override var basalProgram: BasalProgram? = null
+    @Volatile override var deliverySuspended: Boolean = false
+    @Volatile override var lastBolusStartTime: Long? = null
+    @Volatile override var lastBolusRequestedUnits: Double? = null
+    @Volatile override var lastBolusDeliveredUnits: Double? = null
+    @Volatile override var activeTempBasalStartTime: Long? = null
+    @Volatile override var activeTempBasalRate: Double? = null
+    @Volatile override var activeTempBasalDurationMinutes: Short? = null
+    @Volatile override var pendingDoseCommand: O5PodStateManager.PendingDoseCommand? = null
+
+    override fun increaseMessageSequenceNumber() {
+        msgSequenceNumber = ((msgSequenceNumber.toInt() + 1) and 0x0f).toByte()
+    }
 
     @Volatile override var podStatus: PodStatus? = null
         private set
@@ -232,6 +307,15 @@ class InMemoryO5PodStateManager : O5PodStateManager {
         msgSequenceNumber = 1
         eapAkaSequenceNumber = 0
         pendingEapAkaSequenceNumber = 0
+        basalProgram = null
+        deliverySuspended = false
+        lastBolusStartTime = null
+        lastBolusRequestedUnits = null
+        lastBolusDeliveredUnits = null
+        activeTempBasalStartTime = null
+        activeTempBasalRate = null
+        activeTempBasalDurationMinutes = null
+        pendingDoseCommand = null
         podStatus = null
         deliveryStatus = null
         firmwareVersion = null
