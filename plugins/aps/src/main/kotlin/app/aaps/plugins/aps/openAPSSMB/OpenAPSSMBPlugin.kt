@@ -546,48 +546,6 @@ open class OpenAPSSMBPlugin @Inject constructor(
             val maxFromDaily = floor(profile.getMaxDailyBasal() * maxBasalFromDaily * 100) / 100
             absoluteRate.setIfSmaller(maxFromDaily, rh.gs(app.aaps.core.ui.R.string.limitingbasalratio, maxFromDaily, rh.gs(R.string.max_daily_basal_multiplier)), this)
         }
-        // --- Afrezza post-dose max basal ---
-        // Runs AFTER the standard APS caps. Self-capped: raises only up to
-        // minOf(AfrezzaMaxBasalState.rate, ApsMaxBasal) --- the user's OpenAPS Max Basal
-        // is the hard ceiling. Only ever raises (setIfGreater), never lowers the loop's rate.
-        if (AfrezzaMaxBasalState.isActive) {
-            val currentBg = iobCobCalculator.ads.actualBg()?.recalculated ?: 0.0
-            // CGM dropout (null -> 0.0) or hypo: PAUSE --- never raise basal on missing/low BG.
-            if (currentBg <= 0.0 || currentBg in 1.0..70.0) {
-                aapsLogger.info(LTag.APS, "Afrezza max basal paused - BG unavailable or hypo ($currentBg mg/dL)")
-            } else {
-                val afrezzaTarget = minOf(AfrezzaMaxBasalState.rate, preferences.get(DoubleKey.ApsMaxBasal))
-                val lastAutosens = iobCobCalculator.getLastAutosensDataWithWaitForCalculationFinish("Afrezza constraint")
-                val cob = lastAutosens?.cob ?: 0.0
-                if (cob <= 0.0) {
-                    val hasActiveExtendedCarbs = runBlocking {
-                        val recentCarbs = persistenceLayer.getCarbsFromTime(
-                            AfrezzaMaxBasalState.activatedAt - 30 * 60_000L, true
-                        )
-                        recentCarbs.any { it.duration > 0 && (it.timestamp + it.duration) > System.currentTimeMillis() }
-                    }
-                    if (hasActiveExtendedCarbs) {
-                        AfrezzaMaxBasalState.cobZeroSince = 0L
-                        aapsLogger.info(LTag.APS, "Afrezza max basal - COB=0 but extended carbs active, continuing")
-                        absoluteRate.setIfGreater(afrezzaTarget, "Afrezza max basal active", this)
-                    } else {
-                        if (AfrezzaMaxBasalState.cobZeroSince == 0L) {
-                            AfrezzaMaxBasalState.cobZeroSince = System.currentTimeMillis()
-                            aapsLogger.info(LTag.APS, "Afrezza max basal - COB hit 0, bread carbs absorbing")
-                            absoluteRate.setIfGreater(afrezzaTarget, "Afrezza max basal active", this)
-                        } else if (System.currentTimeMillis() - AfrezzaMaxBasalState.cobZeroSince > 5 * 60_000L) {
-                            aapsLogger.info(LTag.APS, "Afrezza max basal stopped - bread carbs absorbed")
-                            AfrezzaMaxBasalState.cancel()
-                        } else {
-                            absoluteRate.setIfGreater(afrezzaTarget, "Afrezza max basal active", this)
-                        }
-                    }
-                } else {
-                    AfrezzaMaxBasalState.cobZeroSince = 0L
-                    absoluteRate.setIfGreater(afrezzaTarget, "Afrezza max basal active", this)
-                }
-            }
-        }
         return absoluteRate
     }
 
