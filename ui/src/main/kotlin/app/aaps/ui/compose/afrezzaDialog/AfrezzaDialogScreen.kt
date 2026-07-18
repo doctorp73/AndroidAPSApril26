@@ -72,25 +72,6 @@ fun AfrezzaDialogScreen(
         )
     }
 
-    // Step 3: Max basal prompt
-    if (uiState.showMaxBasalPrompt) {
-        OkCancelDialog(
-            title = stringResource(R.string.afrezza_max_basal_title),
-            message = stringResource(R.string.afrezza_max_basal_message, uiState.maxBasalRate),
-            onConfirm = { viewModel.acceptMaxBasalPrompt() },
-            onDismiss = { viewModel.dismissMaxBasalPrompt() }
-        )
-    }
-
-    // Step 4: Duration selector
-    if (uiState.showDurationSelector) {
-        DurationSelectorDialog(
-            rate = uiState.maxBasalRate,
-            isApplyingBasal = uiState.isApplyingBasal,
-            onDurationSelected = { minutes -> viewModel.applyMaxBasal(minutes) },
-            onDismiss = { viewModel.dismissDurationSelector() }
-        )
-    }
 
     // Step 5: Open bolus calculator for carbs?
     if (uiState.showCarbPrompt) {
@@ -111,13 +92,6 @@ fun AfrezzaDialogScreen(
         if (!uiState.isConfigured) {
             AfrezzaNotConfiguredContent()
         } else {
-            if (uiState.maxBasalActive) {
-                ActiveMaxBasalCard(
-                    rate = uiState.maxBasalRate,
-                    remainingMinutes = uiState.maxBasalRemainingMinutes,
-                    onCancel = { viewModel.cancelMaxBasal() }
-                )
-            }
             AfrezzaCartridgeSelector(
                 onCartridgeSelected = { units -> viewModel.selectCartridge(units) },
                 isLogging = uiState.isLogging,

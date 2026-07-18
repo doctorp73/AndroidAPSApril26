@@ -139,7 +139,7 @@ class AfrezzaDialogViewModel @Inject constructor(
 
                 aapsLogger.info(LTag.UI, "Afrezza cartridge ${units}U logged as ${effectiveAmount}U with ICfg: ${iCfg.insulinLabel}")
                 _sideEffect.tryEmit(SideEffect.ShowMessage(rh.gs(R.string.afrezza_logged, units)))
-                _uiState.update { it.copy(isLogging = false, showConfirmation = false, showMaxBasalPrompt = true) }
+                _uiState.update { it.copy(isLogging = false, showConfirmation = false, showCarbPrompt = true) }
             } catch (e: Exception) {
                 aapsLogger.error(LTag.UI, "Failed to log Afrezza dose", e)
                 _uiState.update { it.copy(isLogging = false, showConfirmation = false, selectedCartridge = null) }
@@ -147,23 +147,7 @@ class AfrezzaDialogViewModel @Inject constructor(
         }
     }
 
-    fun dismissMaxBasalPrompt() {
-        _uiState.update { it.copy(showMaxBasalPrompt = false, showCarbPrompt = true) }
-    }
 
-    fun acceptMaxBasalPrompt() {
-        _uiState.update { it.copy(showMaxBasalPrompt = false, showDurationSelector = true) }
-    }
-
-    fun dismissDurationSelector() {
-        _uiState.update { it.copy(showDurationSelector = false, showCarbPrompt = true) }
-    }
-
-    fun cancelMaxBasal() {
-        AfrezzaMaxBasalState.cancel()
-        _uiState.update { it.copy(maxBasalActive = false, maxBasalRemainingMinutes = 0) }
-        _sideEffect.tryEmit(SideEffect.ShowMessage(rh.gs(R.string.afrezza_max_basal_cancelled)))
-    }
 
     fun openWizard() {
         _uiState.update { it.copy(showCarbPrompt = false, selectedCartridge = null) }
@@ -174,41 +158,6 @@ class AfrezzaDialogViewModel @Inject constructor(
         _uiState.update { it.copy(showCarbPrompt = false, selectedCartridge = null) }
         _sideEffect.tryEmit(SideEffect.DoseLogged)
     }
-
-    fun applyMaxBasal(durationMinutes: Int) {
-        val maxBasalRate = preferences.get(DoubleKey.AfrezzaMaxBasalRate)
-        // Lock the duration buttons immediately (synchronously, before the suspend below)
-        // so a second tap during the pump round-trip cannot enqueue a second temp basal.
-        _uiState.update { it.copy(isApplyingBasal = true) }
-        viewModelScope.launch {
-            try {
-                val profile = profileFunction.getProfile()
-                if (profile == null) {
-                    aapsLogger.error(LTag.UI, "No active profile — cannot set temp basal")
-                    _sideEffect.tryEmit(SideEffect.ShowMessage(rh.gs(R.string.afrezza_no_profile)))
-                    return@launch
-                }
-                val result = commandQueue.tempBasalAbsolute(
-                    absoluteRate = maxBasalRate,
-                    durationInMinutes = durationMinutes,
-                    enforceNew = true,
-                    profile = profile,
-                    tbrType = PumpSync.TemporaryBasalType.NORMAL
-                )
-                if (result.success) {
-                    aapsLogger.info(LTag.UI, "Max basal $maxBasalRate U/h set for ${durationMinutes} min after Afrezza")
-                    AfrezzaMaxBasalState.activate(maxBasalRate, durationMinutes)
-                    _sideEffect.tryEmit(SideEffect.ShowMessage(rh.gs(R.string.afrezza_max_basal_set, maxBasalRate, durationMinutes)))
-                } else {
-                    aapsLogger.error(LTag.UI, "Failed to set max basal: ${result.comment}")
-                    _sideEffect.tryEmit(SideEffect.ShowMessage(rh.gs(R.string.afrezza_max_basal_failed)))
-                }
-            } catch (e: Exception) {
-                aapsLogger.error(LTag.UI, "Exception setting max basal", e)
-                _sideEffect.tryEmit(SideEffect.ShowMessage(rh.gs(R.string.afrezza_max_basal_failed)))
-            } finally {
-                _uiState.update { it.copy(showDurationSelector = false, showCarbPrompt = true, isApplyingBasal = false) }
-            }
-        }
-    }
 }
+
+
