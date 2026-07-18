@@ -17,7 +17,6 @@ import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.constraints.Constraint
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.constraints.PluginConstraints
-import app.aaps.core.data.afrezza.AfrezzaMaxBasalState
 import kotlinx.coroutines.runBlocking
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.db.ProcessedTbrEbData
@@ -579,7 +578,6 @@ open class OpenAPSSMBPlugin @Inject constructor(
         titleResId = R.string.openapssmb,
         items = listOf(
             DoubleKey.ApsMaxBasal,
-            DoubleKey.AfrezzaMaxBasalRate,
             DoubleKey.ApsSmbMaxIob,
             BooleanKey.ApsUseDynamicSensitivity,
             BooleanKey.ApsUseAutosens,

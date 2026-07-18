@@ -75,7 +75,6 @@ internal class AfrezzaDoseMappingTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
 
         whenever(insulinManager.insulins).thenReturn(arrayListOf(afrezzaCfg))
-        whenever(preferences.get(DoubleKey.AfrezzaMaxBasalRate)).thenReturn(0.0)
         whenever(rh.gs(eq(R.string.afrezza_inhaled))).thenReturn("Afrezza inhaled")
         whenever(rh.gs(eq(R.string.afrezza_logged), any())).thenReturn("logged")
         whenever(dateUtil.now()).thenReturn(1_000L)

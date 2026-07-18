@@ -1,6 +1,5 @@
 package app.aaps.ui.compose.afrezzaDialog
 
-import app.aaps.core.data.afrezza.AfrezzaMaxBasalState
 
 import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
@@ -70,14 +69,10 @@ class AfrezzaDialogViewModel @Inject constructor(
 
     init {
         val afrezzaIcfg = findAfrezzaIcfg()
-        val maxBasalRate = preferences.get(DoubleKey.AfrezzaMaxBasalRate)
         _uiState.update {
             AfrezzaDialogUiState(
                 afrezzaIcfg = afrezzaIcfg,
-                isConfigured = afrezzaIcfg != null,
-                maxBasalRate = maxBasalRate,
-                maxBasalActive = AfrezzaMaxBasalState.isActive,
-                maxBasalRemainingMinutes = AfrezzaMaxBasalState.remainingMinutes
+                isConfigured = afrezzaIcfg != null
             )
         }
     }
