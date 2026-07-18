@@ -20,7 +20,7 @@ DEV:
 This branch adds two features on top of upstream AAPS:
 
 1. **Eversense CGM integration** — direct BLE connection to Eversense E3 and E365 transmitters as a native AAPS BG source, with calibration, alarms, DMS portal sync, and (for E365) cloud upload.
-2. **Afrezza inhaled insulin support** — a second, independently-tracked insulin curve for logging Technosphere inhaled insulin doses, plus an optional post-dose max-basal safety mechanism.
+2. **Afrezza inhaled insulin support** — a second, independently-tracked insulin curve for logging Technosphere inhaled insulin doses.
 
 Both are experimental, community-developed modifications. Neither is approved by any regulatory body. **Discuss any changes to your insulin regimen with your endocrinologist before use, and always keep fingerstick meter access as a backup.**
 
@@ -132,7 +132,6 @@ These same uploads are also sent to the **Eversense NOW** app, available on the 
 
 The Afrezza plugin adds support for **Technosphere inhaled insulin (Afrezza)** alongside your pump insulin. It tracks Afrezza's insulin-on-board (IOB) using the correct pharmacokinetic curve — peak at ~40 minutes, duration of ~2.5 hours — instead of applying your pump insulin's longer curve to inhaled doses. This means AAPS correctly predicts when Afrezza wears off, and your pump resumes normal basal delivery on the right schedule instead of running with phantom IOB.
 
-An optional **post-dose max-basal safety mechanism** is also included, described in Part 3 below.
 
 **Safety reminders:**
 - Always discuss insulin changes with your endocrinologist before using Afrezza alongside your pump.
@@ -156,39 +155,22 @@ An optional **post-dose max-basal safety mechanism** is also included, described
 1. Open the Afrezza dialog (from the treatment sheet, or wherever it's placed in your build's navigation).
 2. **Step 1 — Select cartridge:** tap **4U**, **8U**, or **12U** to match the cartridge you're about to inhale.
 3. **Step 2 — Confirm:** a dialog asks *"Log \[X\]U Afrezza?"* — tap Confirm.
-4. **Step 3 — Max basal prompt (optional):** a dialog asks *"Apply Max Basal? Set temporary basal rate to \[X.X\] U/h to counter Afrezza glucose rise?"* This is your Afrezza max-basal rate setting (see Part 3). Tap **Yes** to use it for this dose, or **No** to skip it and log the dose alone.
-5. **Step 4 — Duration selector (only if you accepted Step 3):** choose how long to apply the elevated basal — **1 hour, 2 hours, or 3 hours**. As a general guide: **1 hour** for carb-heavy meals, **2 hours** for meals with an even mix of carbs, fat, and protein, and **3 hours** for fat-heavy or high-protein meals. The recommended **Afrezza max basal rate** setting (Part 3 below) is to match your current highest basal rate in your profile.
-6. **Step 5 — Carb prompt:** a dialog asks *"Enter Carbs? Open the Bolus Calculator to enter carbs for this meal?"* Tap **Yes** to jump straight into the bolus wizard for this meal's carbs, or **No** to finish without logging carbs right now.
+4. **Step 3 — Carb prompt:** a dialog asks *"Enter Carbs? Open the Bolus Calculator to enter carbs for this meal?"* Tap **Yes** to jump straight into the bolus wizard for this meal's carbs, or **No** to finish without logging carbs right now.
 7. Inhale the Afrezza cartridge.
 
-### Part 3: The Afrezza Max-Basal Safety Mechanism
+### Part 3: Understanding Dual IOB Tracking
 
-This is an **optional, per-dose** feature — you choose whether to use it each time you log a dose (Step 3 above). It is not automatic and does not run unless you accept the prompt.
-
-**What it does:** for a limited time after your dose (1/2/3 hours, your choice), it allows the loop to run at a higher basal rate than it would otherwise calculate — helping counter the glucose rise from a meal while Afrezza's fast-acting curve is still working. It can only ever *raise* the loop's calculated rate; it never forces basal lower than what the loop already decided.
-
-**Where the rate comes from:** Settings → OpenAPS SMB settings → **"Afrezza max basal rate"** (range 0.1–3.0 U/h, default 2.0 U/h). This is the rate offered in the Step 3 prompt each time. **Recommended setting:** match your current highest basal rate in your profile.
-
-**Built-in safety limits:**
-- **Hard capped by your own OpenAPS Max Basal setting** — the Afrezza rate can never exceed whatever you've already configured as your absolute max basal; a higher Afrezza value simply has no additional effect.
-- **Hypo / CGM-dropout guard** — if your current BG is unavailable (CGM dropout) or between 1–70 mg/dL, the mechanism pauses and will not raise basal until BG data is available and above 70.
-- **Carb-aware auto-cancel** — once carbs-on-board (COB) reaches zero, the mechanism checks for an active *extended* carb entry (e.g. pizza, high-fat meals logged with a duration) — if one is still running, it continues. If not (e.g. a simple, fast-absorbing meal), it allows a 5-minute grace period after COB hits zero, then automatically cancels itself.
-- **Manual cancel anytime** — while active, a card at the top of the Afrezza dialog shows the current rate and time remaining, with a **Cancel** button to stop it immediately.
-
-### Part 4: Understanding Dual IOB Tracking
-
-AAPS tracks two separate IOB curves at once: your **pump insulin** (its normal DIA, typically 5+ hours) covering basal, SMBs, and manual pump boluses; and **Afrezza IOB** (peak 40min, DIA per your Part 1 setting) covering only doses logged through the Afrezza flow. The total IOB shown on the home screen is the sum of both, and AAPS uses the combined value for all predictions and dosing decisions.
+AAPS tracks two separate IOB curves at once: your **pump insulin** (its normal DIA, typically 5+ hours) covering basal, SMBs, and manual pump boluses; and **Afrezza IOB** (peak 15min, DIA 1.5h default, adjustable 1.0-2.0h) covering only doses logged through the Afrezza flow. The total IOB shown on the home screen is the sum of both, and AAPS uses the combined value for all predictions and dosing decisions.
 
 ### Troubleshooting
 
 - **"Add Afrezza insulin in Insulin Management first"** — you haven't completed Part 1 yet.
 - **DIA slider won't go below 5.0** — the wrong template was selected; reselect "Afrezza (Inhaled)" specifically.
-- **IOB seems too high after a dose** — check that your Afrezza insulin's DIA is actually set to your intended value (e.g. 2.5h), not left at a pump-insulin-length default.
-- **Max basal doesn't seem to be raising basal** — check your OpenAPS Max Basal setting; if it's lower than your Afrezza max-basal rate, the OpenAPS setting wins and caps the effective rate.
+- **IOB seems too high after a dose** — check that your Afrezza insulin's DIA is actually set to your intended value (e.g. 1.5h), not left at a pump-insulin-length default.
 
 ---
 
 ## Known Limitations
 
-- The Afrezza max-basal safety mechanism and the Eversense connection logic are both actively evolving. Check the branch's commit history for the latest state before relying on either in a real-world dosing decision.
+- The Eversense connection logic is actively evolving. Check the branch's commit history for the latest state before relying on it in a real-world dosing decision.
 - The E365/official-app contention issue is a platform-level Android Bluetooth limitation (only one app can hold an active GATT connection to the transmitter at a time), not a bug specific to either app. There is no way to make two apps share the connection simultaneously for the E365.
