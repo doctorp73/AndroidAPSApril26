@@ -11,6 +11,7 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.notifications.NotificationId
 import app.aaps.core.interfaces.notifications.NotificationManager
 import app.aaps.core.interfaces.plugin.PluginDescription
+import app.aaps.core.interfaces.pump.BlePreCheck
 import app.aaps.core.interfaces.pump.BolusProgressData
 import app.aaps.core.interfaces.pump.DetailedBolusInfo
 import app.aaps.core.interfaces.pump.Pump
@@ -21,25 +22,39 @@ import app.aaps.core.interfaces.pump.PumpProfile
 import app.aaps.core.interfaces.pump.PumpRate
 import app.aaps.core.interfaces.pump.PumpSync
 import app.aaps.core.interfaces.pump.defs.fillFor
+import app.aaps.core.interfaces.protection.ProtectionCheck
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.queue.CustomCommand
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.compose.icons.IcPluginOmnipod
 import app.aaps.pump.omnipod.common.bledriver.comm.O5BleManager
+import app.aaps.pump.omnipod.common.bledriver.pod.command.DeactivateCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.GetStatusCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.ProgramBasalCommand
+import app.aaps.pump.omnipod.common.bledriver.pod.command.ProgramBeepsCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.ProgramBolusCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.ProgramTempBasalCommand
+import app.aaps.pump.omnipod.common.bledriver.pod.command.SilenceAlertsCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.StopDeliveryCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.SuspendDeliveryCommand
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.ActivationProgress
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.BeepType
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.O5_FIXED_NONCE
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodConstants
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.ProgramReminder
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.ResponseType
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
 import app.aaps.pump.omnipod.common.keys.OmnipodBooleanPreferenceKey
+import app.aaps.pump.omnipod.common.queue.command.CommandDeactivatePod
+import app.aaps.pump.omnipod.common.queue.command.CommandHandleTimeChange
 import app.aaps.pump.omnipod.common.queue.command.CommandPairNewPod
+import app.aaps.pump.omnipod.common.queue.command.CommandPlayTestBeep
+import app.aaps.pump.omnipod.common.queue.command.CommandResumeDelivery
+import app.aaps.pump.omnipod.common.queue.command.CommandSilenceAlerts
+import app.aaps.pump.omnipod.common.queue.command.CommandSuspendDelivery
+import app.aaps.pump.omnipod.common.ui.compose.OmnipodO5ComposeContent
 import app.aaps.pump.omnipod.common.util.mapProfileToBasalProgram
 import io.reactivex.rxjava3.core.Completable
 import io.reactivex.rxjava3.core.Single
@@ -86,10 +101,20 @@ class O5PumpPlugin @Inject constructor(
     private val pumpSync: PumpSync,
     private val notificationManager: NotificationManager,
     private val pumpEnactResultProvider: Provider<PumpEnactResult>,
-    private val bolusProgressData: BolusProgressData
+    private val bolusProgressData: BolusProgressData,
+    private val protectionCheck: ProtectionCheck,
+    private val blePreCheck: BlePreCheck
 ) : PumpPluginBase(
     pluginDescription = PluginDescription()
         .mainType(PluginType.PUMP)
+        .composeContent { _ ->
+            OmnipodO5ComposeContent(
+                pluginName = rh.gs(R.string.omnipod_5_name),
+                protectionCheck = protectionCheck,
+                blePreCheck = blePreCheck,
+                rh = rh
+            )
+        }
         .icon(IcPluginOmnipod)
         .pluginName(R.string.omnipod_5_name)
         .shortName(R.string.omnipod_5_name_short)
@@ -111,11 +136,7 @@ class O5PumpPlugin @Inject constructor(
         private const val STATUS_CHECK_INTERVAL_MS = 60L * 1000
         private const val RESERVOIR_OVER_50_UNITS_DEFAULT = 75.0
 
-        /** The Omnipod 5 pod protocol uses a fixed nonce, same finding as Dash's
-         *  [app.aaps.pump.omnipod.dash.driver.OmnipodDashManagerImpl] - this is a
-         *  pod-firmware-level property of the shared command/response layer, not
-         *  specific to either pod type. */
-        private const val FIXED_NONCE = 1229869870
+        private const val FIXED_NONCE = O5_FIXED_NONCE
 
         /** Matches Dash's fixed pulse-delay constant for bolus delivery pacing - a
          *  pod-firmware-level property of the shared command layer. */
@@ -147,15 +168,18 @@ class O5PumpPlugin @Inject constructor(
 
     // -- connection lifecycle -------------------------------------------------------------
 
-    override fun isInitialized(): Boolean = podStateManager.podStatus != null && podStateManager.ltk != null
+    override fun isInitialized(): Boolean = podStateManager.activationProgress == ActivationProgress.COMPLETED
     override fun isSuspended(): Boolean = podStateManager.deliverySuspended
 
-    // No multi-step in-progress-activation concept exists for O5 yet (no pairing wizard - pairing is
-    // a single CommandPairNewPod call, see executeCustomCommand). isBusy() gates the ENTIRE command
-    // queue, including that custom command itself (see QueueWorker's isBusy() check) - returning true
-    // while unpaired would deadlock pairing forever. Dosing methods already guard on podId/ltk being
-    // present via requirePodId() and fail gracefully instead.
-    override fun isBusy(): Boolean = false
+    // isBusy() gates the ENTIRE command queue, including custom commands like
+    // CommandPairNewPod (see QueueWorker's isBusy() check) - NOT_STARTED is deliberately
+    // excluded so pairing itself is never blocked (that's the step that transitions out of
+    // NOT_STARTED). Only an activation already in progress blocks the queue, matching Dash's
+    // ActivationProgress-based isBusy(). O5OmnipodWizardViewModel calls bleManager/command
+    // classes directly (not via CommandQueue), so this gate never blocks its own steps.
+    override fun isBusy(): Boolean =
+        podStateManager.activationProgress != ActivationProgress.NOT_STARTED &&
+            podStateManager.activationProgress.isBefore(ActivationProgress.COMPLETED)
 
     override fun isConnected(): Boolean =
         podStateManager.ltk == null ||
@@ -612,8 +636,14 @@ class O5PumpPlugin @Inject constructor(
 
     override fun executeCustomCommand(customCommand: CustomCommand): PumpEnactResult =
         when (customCommand) {
-            is CommandPairNewPod -> pairNewPod()
-            else                  -> {
+            is CommandPairNewPod      -> pairNewPod()
+            is CommandDeactivatePod   -> deactivatePod()
+            is CommandSilenceAlerts   -> silenceAlerts()
+            is CommandResumeDelivery  -> runBlocking { resumeOrHandleTimeChange() }
+            is CommandSuspendDelivery -> suspendDelivery()
+            is CommandPlayTestBeep    -> playTestBeep()
+            is CommandHandleTimeChange -> runBlocking { resumeOrHandleTimeChange() }
+            else                      -> {
                 aapsLogger.warn(LTag.PUMP, "Unsupported custom command: " + customCommand.javaClass.name)
                 pumpEnactResultProvider.get().success(false).enacted(false).comment(
                     rh.gs(R.string.omnipod_common_error_unsupported_custom_command, customCommand.javaClass.name)
@@ -629,6 +659,80 @@ class O5PumpPlugin @Inject constructor(
             aapsLogger.error(LTag.PUMP, "Error pairing new O5 pod", e)
             pumpEnactResultProvider.get().success(false).enacted(false)
         }
+
+    private fun deactivatePod(): PumpEnactResult =
+        try {
+            val cmd = DeactivateCommand.Builder()
+                .setUniqueId(requirePodId())
+                .setSequenceNumber(podStateManager.msgSequenceNumber.toShort())
+                .setNonce(FIXED_NONCE)
+                .build()
+            bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
+            bleManager.removeBond()
+            podStateManager.reset()
+            notificationManager.dismiss(NotificationId.OMNIPOD_POD_FAULT)
+            pumpEnactResultProvider.get().success(true).enacted(true)
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.PUMP, "Error deactivating O5 pod", e)
+            pumpEnactResultProvider.get().success(false).enacted(false)
+        }
+
+    private fun silenceAlerts(): PumpEnactResult =
+        podStateManager.activeAlerts?.let { alerts ->
+            try {
+                val cmd = SilenceAlertsCommand.Builder()
+                    .setUniqueId(requirePodId())
+                    .setSequenceNumber(podStateManager.msgSequenceNumber.toShort())
+                    .setNonce(FIXED_NONCE)
+                    .setAlertTypes(alerts)
+                    .build()
+                bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
+                pumpEnactResultProvider.get().success(true).enacted(true)
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.PUMP, "Error silencing O5 alerts", e)
+                pumpEnactResultProvider.get().success(false).enacted(false)
+            }
+        } ?: pumpEnactResultProvider.get().success(false).enacted(false).comment(rh.gs(R.string.omnipod_5_error_no_active_alerts))
+
+    private fun suspendDelivery(): PumpEnactResult =
+        try {
+            val cmd = SuspendDeliveryCommand.Builder()
+                .setUniqueId(requirePodId())
+                .setSequenceNumber(podStateManager.msgSequenceNumber.toShort())
+                .setNonce(FIXED_NONCE)
+                .build()
+            bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
+            podStateManager.deliverySuspended = true
+            pumpEnactResultProvider.get().success(true).enacted(true)
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.PUMP, "Error suspending O5 delivery", e)
+            pumpEnactResultProvider.get().success(false).enacted(false)
+        }
+
+    private fun playTestBeep(): PumpEnactResult =
+        try {
+            val silentReminder = ProgramReminder(atStart = false, atEnd = false, atInterval = 0)
+            val cmd = ProgramBeepsCommand.Builder()
+                .setUniqueId(requirePodId())
+                .setSequenceNumber(podStateManager.msgSequenceNumber.toShort())
+                .setImmediateBeepType(BeepType.LONG_SINGLE_BEEP)
+                .setBasalReminder(silentReminder)
+                .setTempBasalReminder(silentReminder)
+                .setBolusReminder(silentReminder)
+                .build()
+            bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
+            pumpEnactResultProvider.get().success(true).enacted(true)
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.PUMP, "Error playing O5 test beep", e)
+            pumpEnactResultProvider.get().success(false).enacted(false)
+        }
+
+    /** Resume Delivery and Handle Time Change are both just "(re)program the current
+     *  basal profile" - [ProgramBasalCommand] always sets the pod's current time and
+     *  implicitly resumes delivery, same as Dash's identical handling of both. */
+    private suspend fun resumeOrHandleTimeChange(): PumpEnactResult =
+        pumpSync.expectedPumpState().profile?.let { setNewBasalProfile(it) }
+            ?: pumpEnactResultProvider.get().success(false).enacted(false).comment(rh.gs(R.string.omnipod_5_error_no_active_profile))
 
     private fun notifyUncertain(id: NotificationId, message: String) {
         if (podStateManager.pendingDoseCommand != null) {

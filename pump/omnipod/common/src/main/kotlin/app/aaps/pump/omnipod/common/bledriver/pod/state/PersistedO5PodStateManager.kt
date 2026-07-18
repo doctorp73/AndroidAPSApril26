@@ -5,6 +5,7 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.pump.omnipod.common.bledriver.comm.pair.PairResult
 import app.aaps.pump.omnipod.common.bledriver.comm.session.EapSqn
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.ActivationProgress
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlarmType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.BasalProgram
@@ -13,6 +14,7 @@ import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.SoftwareVersion
 import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.SetUniqueIdResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import app.aaps.pump.omnipod.common.keys.O5StringNonPreferenceKey
 import com.google.gson.Gson
@@ -115,6 +117,41 @@ class PersistedO5PodStateManager @Inject constructor(
         podState.msgSequenceNumber = ((podState.msgSequenceNumber.toInt() + 1) and 0x0f).toByte()
         store()
     }
+
+    override var activationProgress: ActivationProgress
+        get() = podState.activationProgress
+        set(value) {
+            podState.activationProgress = value
+            store()
+        }
+
+    override var primePulseRate: Short?
+        get() = podState.primePulseRate
+        set(value) {
+            podState.primePulseRate = value
+            store()
+        }
+
+    override var firstPrimeBolusVolume: Short?
+        get() = podState.firstPrimeBolusVolume
+        set(value) {
+            podState.firstPrimeBolusVolume = value
+            store()
+        }
+
+    override var secondPrimeBolusVolume: Short?
+        get() = podState.secondPrimeBolusVolume
+        set(value) {
+            podState.secondPrimeBolusVolume = value
+            store()
+        }
+
+    override var podLifeInHours: Short?
+        get() = podState.podLifeInHours
+        set(value) {
+            podState.podLifeInHours = value
+            store()
+        }
 
     override var basalProgram: BasalProgram?
         get() = podState.basalProgram
@@ -262,6 +299,24 @@ class PersistedO5PodStateManager @Inject constructor(
         store()
     }
 
+    override fun updateFromSetUniqueIdResponse(response: SetUniqueIdResponse) {
+        podState.primePulseRate = response.primePumpRate
+        podState.firstPrimeBolusVolume = response.numberOfEngagingClutchDrivePulses
+        podState.secondPrimeBolusVolume = response.numberOfPrimePulses
+        podState.podLifeInHours = response.podExpirationTimeInHours
+        podState.firmwareVersion = SoftwareVersion(
+            response.firmwareVersionMajor, response.firmwareVersionMinor, response.firmwareVersionInterim
+        )
+        podState.bleVersion = SoftwareVersion(
+            response.bleVersionMajor, response.bleVersionMinor, response.bleVersionInterim
+        )
+        podState.podStatus = response.podStatus
+        podState.lotNumber = response.lotNumber
+        podState.podSequenceNumber = response.podSequenceNumber
+        podState.lastStatusResponseReceived = System.currentTimeMillis()
+        store()
+    }
+
     override fun reset() {
         podState = PodState()
         store()
@@ -302,6 +357,11 @@ class PersistedO5PodStateManager @Inject constructor(
         var ltk: ByteArray? = null,
         var msgSequenceNumber: Byte = 1,
         var eapAkaSequenceNumber: Long = 0,
+        var activationProgress: ActivationProgress = ActivationProgress.NOT_STARTED,
+        var primePulseRate: Short? = null,
+        var firstPrimeBolusVolume: Short? = null,
+        var secondPrimeBolusVolume: Short? = null,
+        var podLifeInHours: Short? = null,
         var basalProgram: BasalProgram? = null,
         var deliverySuspended: Boolean = false,
         var lastBolusStartTime: Long? = null,

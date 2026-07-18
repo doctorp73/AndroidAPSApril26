@@ -3,6 +3,7 @@ package app.aaps.pump.omnipod.common.bledriver.pod.state
 import app.aaps.core.data.model.BS
 import app.aaps.pump.omnipod.common.bledriver.comm.pair.PairResult
 import app.aaps.pump.omnipod.common.bledriver.comm.session.EapSqn
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.ActivationProgress
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlarmType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.BasalProgram
@@ -11,6 +12,7 @@ import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.SoftwareVersion
 import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.SetUniqueIdResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import java.io.Serializable
 import java.util.EnumSet
@@ -68,6 +70,20 @@ interface O5PodStateManager {
     fun increaseMessageSequenceNumber()
 
     var eapAkaSequenceNumber: Long
+
+    /** How far through physical pod activation (pairing, prime, cannula insertion) the
+     *  pod has progressed - default [ActivationProgress.NOT_STARTED]. Drives
+     *  [app.aaps.pump.omnipod.common.O5PumpPlugin.isBusy] and lets
+     *  [app.aaps.pump.omnipod.common.ui.wizard.compose.O5OmnipodWizardViewModel] resume
+     *  a retried activation without resending already-completed steps. */
+    var activationProgress: ActivationProgress
+
+    // -- prime-bolus parameters, populated from SetUniqueIdResponse ----------------------
+
+    var primePulseRate: Short?
+    var firstPrimeBolusVolume: Short?
+    var secondPrimeBolusVolume: Short?
+    var podLifeInHours: Short?
 
     // -- dosing/control state ------------------------------------------------------------
 
@@ -148,6 +164,11 @@ interface O5PodStateManager {
     fun updateFromDefaultStatusResponse(response: DefaultStatusResponse)
     fun updateFromAlarmStatusResponse(response: AlarmStatusResponse)
 
+    /** Populates the prime-bolus parameters ([primePulseRate], [firstPrimeBolusVolume],
+     *  [secondPrimeBolusVolume], [podLifeInHours]) plus version/status/lot/sequence
+     *  fields - mirrors [OmnipodDashPodStateManager.updateFromSetUniqueIdResponse]. */
+    fun updateFromSetUniqueIdResponse(response: SetUniqueIdResponse)
+
     /**
      * Returns the next EAP-AKA sequence number (as its 6-byte on-wire [EapSqn]
      * representation) without yet committing it - matching
@@ -189,6 +210,12 @@ class InMemoryO5PodStateManager : O5PodStateManager {
 
     @Volatile override var eapAkaSequenceNumber: Long = 0
     @Volatile private var pendingEapAkaSequenceNumber: Long = 0
+
+    @Volatile override var activationProgress: ActivationProgress = ActivationProgress.NOT_STARTED
+    @Volatile override var primePulseRate: Short? = null
+    @Volatile override var firstPrimeBolusVolume: Short? = null
+    @Volatile override var secondPrimeBolusVolume: Short? = null
+    @Volatile override var podLifeInHours: Short? = null
 
     @Volatile override var basalProgram: BasalProgram? = null
     @Volatile override var deliverySuspended: Boolean = false
@@ -296,6 +323,19 @@ class InMemoryO5PodStateManager : O5PodStateManager {
         lastStatusResponseReceived = System.currentTimeMillis()
     }
 
+    override fun updateFromSetUniqueIdResponse(response: SetUniqueIdResponse) {
+        primePulseRate = response.primePumpRate
+        firstPrimeBolusVolume = response.numberOfEngagingClutchDrivePulses
+        secondPrimeBolusVolume = response.numberOfPrimePulses
+        podLifeInHours = response.podExpirationTimeInHours
+        firmwareVersion = SoftwareVersion(response.firmwareVersionMajor, response.firmwareVersionMinor, response.firmwareVersionInterim)
+        bleVersion = SoftwareVersion(response.bleVersionMajor, response.bleVersionMinor, response.bleVersionInterim)
+        podStatus = response.podStatus
+        lotNumber = response.lotNumber
+        podSequenceNumber = response.podSequenceNumber
+        lastStatusResponseReceived = System.currentTimeMillis()
+    }
+
     override fun reset() {
         bluetoothConnectionState = O5PodStateManager.BluetoothConnectionState.DISCONNECTED
         connectionAttemptsCounter.set(0)
@@ -307,6 +347,11 @@ class InMemoryO5PodStateManager : O5PodStateManager {
         msgSequenceNumber = 1
         eapAkaSequenceNumber = 0
         pendingEapAkaSequenceNumber = 0
+        activationProgress = ActivationProgress.NOT_STARTED
+        primePulseRate = null
+        firstPrimeBolusVolume = null
+        secondPrimeBolusVolume = null
+        podLifeInHours = null
         basalProgram = null
         deliverySuspended = false
         lastBolusStartTime = null

@@ -38,6 +38,7 @@ import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodType
 import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.Response
+import app.aaps.pump.omnipod.common.bledriver.pod.response.SetUniqueIdResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
 import app.aaps.pump.omnipod.common.bledriver.pod.security.SecureO5RegistrationStorage
@@ -149,7 +150,8 @@ class O5BleManagerImpl @Inject constructor(
             is VersionResponse       -> podState.updateFromVersionResponse(response)
             is DefaultStatusResponse -> podState.updateFromDefaultStatusResponse(response)
             is AlarmStatusResponse   -> podState.updateFromAlarmStatusResponse(response)
-            else                     -> Unit // other response types (Nak, SetUniqueId) don't carry general status
+            is SetUniqueIdResponse   -> podState.updateFromSetUniqueIdResponse(response)
+            else                     -> Unit // other response types (Nak) don't carry general status
         }
     }
 
