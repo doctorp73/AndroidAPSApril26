@@ -12,9 +12,16 @@ import app.aaps.core.interfaces.queue.CustomCommand
 import app.aaps.pump.omnipod.common.bledriver.comm.O5BleManager
 import app.aaps.pump.omnipod.common.bledriver.event.PodEvent
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.ActivationProgress
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.DeliveryStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
+import app.aaps.pump.omnipod.common.queue.command.CommandDeactivatePod
+import app.aaps.pump.omnipod.common.queue.command.CommandHandleTimeChange
 import app.aaps.pump.omnipod.common.queue.command.CommandPairNewPod
+import app.aaps.pump.omnipod.common.queue.command.CommandPlayTestBeep
+import app.aaps.pump.omnipod.common.queue.command.CommandResumeDelivery
+import app.aaps.pump.omnipod.common.queue.command.CommandSilenceAlerts
+import app.aaps.pump.omnipod.common.queue.command.CommandSuspendDelivery
 import app.aaps.shared.tests.TestBaseWithProfile
 import com.google.common.truth.Truth.assertThat
 import io.reactivex.rxjava3.core.Observable
@@ -65,6 +72,8 @@ class O5PumpPluginTest : TestBaseWithProfile() {
         whenever(rh.gs(R.string.omnipod_5_error_bolus_already_in_progress)).thenReturn("Bolus already in progress")
         whenever(rh.gs(R.string.omnipod_5_error_extended_bolus_not_supported)).thenReturn("Extended bolus not supported")
         whenever(rh.gs(R.string.omnipod_common_error_unsupported_custom_command)).thenReturn("Unsupported custom command: %1\$s")
+        whenever(rh.gs(R.string.omnipod_5_error_no_active_profile)).thenReturn("No active profile")
+        whenever(rh.gs(R.string.omnipod_5_error_no_active_alerts)).thenReturn("No active alerts")
     }
 
     // -- isBusy / isConnected / isInitialized (the exact bug class already hit once) -------
@@ -217,6 +226,99 @@ class O5PumpPluginTest : TestBaseWithProfile() {
         assertThat(result).isNotNull()
         assertThat(result!!.success).isFalse()
         assertThat(result.enacted).isFalse()
+    }
+
+    @Test
+    fun `executeCustomCommand deactivates the pod for CommandDeactivatePod`() {
+        whenever(podStateManager.podId).thenReturn(12345L)
+        whenever(bleManager.sendCommand(any(), any())).thenReturn(Observable.empty())
+
+        val result = plugin.executeCustomCommand(CommandDeactivatePod())
+
+        assertThat(result!!.success).isTrue()
+        assertThat(result.enacted).isTrue()
+        verify(bleManager).sendCommand(any(), any())
+        verify(bleManager).removeBond()
+        verify(podStateManager).reset()
+    }
+
+    @Test
+    fun `executeCustomCommand silences alerts for CommandSilenceAlerts when there are active alerts`() {
+        whenever(podStateManager.podId).thenReturn(12345L)
+        whenever(podStateManager.activeAlerts).thenReturn(java.util.EnumSet.of(AlertType.LOW_RESERVOIR))
+        whenever(bleManager.sendCommand(any(), any())).thenReturn(Observable.empty())
+
+        val result = plugin.executeCustomCommand(CommandSilenceAlerts())
+
+        assertThat(result!!.success).isTrue()
+        assertThat(result.enacted).isTrue()
+        verify(bleManager).sendCommand(any(), any())
+    }
+
+    @Test
+    fun `executeCustomCommand rejects CommandSilenceAlerts when there are no active alerts`() {
+        whenever(podStateManager.activeAlerts).thenReturn(null)
+
+        val result = plugin.executeCustomCommand(CommandSilenceAlerts())
+
+        assertThat(result!!.success).isFalse()
+        assertThat(result.enacted).isFalse()
+        verify(bleManager, never()).sendCommand(any(), any())
+    }
+
+    @Test
+    fun `executeCustomCommand suspends delivery for CommandSuspendDelivery`() {
+        whenever(podStateManager.podId).thenReturn(12345L)
+        whenever(bleManager.sendCommand(any(), any())).thenReturn(Observable.empty())
+
+        val result = plugin.executeCustomCommand(CommandSuspendDelivery())
+
+        assertThat(result!!.success).isTrue()
+        assertThat(result.enacted).isTrue()
+        verify(bleManager).sendCommand(any(), any())
+        verify(podStateManager).deliverySuspended = true
+    }
+
+    @Test
+    fun `executeCustomCommand plays a test beep for CommandPlayTestBeep`() {
+        whenever(podStateManager.podId).thenReturn(12345L)
+        whenever(bleManager.sendCommand(any(), any())).thenReturn(Observable.empty())
+
+        val result = plugin.executeCustomCommand(CommandPlayTestBeep())
+
+        assertThat(result!!.success).isTrue()
+        assertThat(result.enacted).isTrue()
+        verify(bleManager).sendCommand(any(), any())
+    }
+
+    @Test
+    fun `executeCustomCommand for CommandResumeDelivery fails cleanly when there is no active profile`() {
+        runBlocking {
+            whenever(pumpSync.expectedPumpState()).thenReturn(
+                PumpSync.PumpState(temporaryBasal = null, extendedBolus = null, bolus = null, profile = null, serialNumber = "")
+            )
+
+            val result = plugin.executeCustomCommand(CommandResumeDelivery())
+
+            assertThat(result!!.success).isFalse()
+            assertThat(result.enacted).isFalse()
+            verify(bleManager, never()).sendCommand(any(), any())
+        }
+    }
+
+    @Test
+    fun `executeCustomCommand for CommandHandleTimeChange fails cleanly when there is no active profile`() {
+        runBlocking {
+            whenever(pumpSync.expectedPumpState()).thenReturn(
+                PumpSync.PumpState(temporaryBasal = null, extendedBolus = null, bolus = null, profile = null, serialNumber = "")
+            )
+
+            val result = plugin.executeCustomCommand(CommandHandleTimeChange(true))
+
+            assertThat(result!!.success).isFalse()
+            assertThat(result.enacted).isFalse()
+            verify(bleManager, never()).sendCommand(any(), any())
+        }
     }
 
     // -- simple property surface --------------------------------------------------------------

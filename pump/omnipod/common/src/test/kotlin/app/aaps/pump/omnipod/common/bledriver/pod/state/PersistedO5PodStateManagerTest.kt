@@ -3,7 +3,14 @@ package app.aaps.pump.omnipod.common.bledriver.pod.state
 import app.aaps.core.data.model.BS
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.ActivationProgress
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlarmType
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.BasalProgram
+import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoActivationTimeResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoTriggeredAlertsResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import app.aaps.pump.omnipod.common.keys.O5StringNonPreferenceKey
 import app.aaps.shared.tests.TestBase
 import com.google.common.truth.Truth.assertThat
@@ -43,6 +50,9 @@ class PersistedO5PodStateManagerTest : TestBase() {
     }
 
     private fun newManager() = PersistedO5PodStateManager(aapsLogger, preferences)
+
+    private fun hexToBytes(hex: String): ByteArray =
+        ByteArray(hex.length / 2) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
 
     @Test
     fun `fresh manager with no stored state returns defaults`() {
@@ -170,6 +180,159 @@ class PersistedO5PodStateManagerTest : TestBase() {
         assertThat(manager.basalProgram).isNull()
         assertThat(manager.primePulseRate).isNull()
         assertThat(manager.pendingDoseCommand).isNull()
+        assertThat(manager.ltk).isNull()
+    }
+
+    @Test
+    fun `connection identity and counters round-trip`() {
+        val writer = newManager()
+        writer.bluetoothAddress = "AA:BB:CC:DD:EE:FF"
+        writer.controllerId = 0x11223344L
+        writer.podId = 0x55667788L
+        writer.connectionAttempts = 3
+        writer.successfulConnections = 2
+        writer.eapAkaSequenceNumber = 42L
+
+        val reader = newManager()
+
+        assertThat(reader.bluetoothAddress).isEqualTo("AA:BB:CC:DD:EE:FF")
+        assertThat(reader.controllerId).isEqualTo(0x11223344L)
+        assertThat(reader.podId).isEqualTo(0x55667788L)
+        assertThat(reader.connectionAttempts).isEqualTo(3)
+        assertThat(reader.successfulConnections).isEqualTo(2)
+        assertThat(reader.eapAkaSequenceNumber).isEqualTo(42L)
+    }
+
+    @Test
+    fun `updateFromPairing sets controllerId, podId, ltk, and msgSequenceNumber together and persists`() {
+        val writer = newManager()
+
+        val ltk = ByteArray(16) { it.toByte() }
+        writer.updateFromPairing(
+            controllerId = 0xAABBCCDDL,
+            podId = 0x11223344L,
+            pairResult = app.aaps.pump.omnipod.common.bledriver.comm.pair.PairResult(ltk = ltk, msgSeq = 7)
+        )
+
+        val reader = newManager()
+        assertThat(reader.controllerId).isEqualTo(0xAABBCCDDL)
+        assertThat(reader.podId).isEqualTo(0x11223344L)
+        assertThat(reader.ltk).isEqualTo(ltk)
+        assertThat(reader.msgSequenceNumber).isEqualTo(7.toByte())
+    }
+
+    @Test
+    fun `updateFromVersionResponse persists the parsed status-version fields`() {
+        val response = VersionResponse(hexToBytes("0115040A00010300040208146CC1000954D400FFFFFFFF"))
+        val writer = newManager()
+
+        writer.updateFromVersionResponse(response)
+
+        val reader = newManager()
+        assertThat(reader.podStatus).isEqualTo(response.podStatus)
+        assertThat(reader.firmwareVersion).isNotNull()
+        assertThat(reader.bleVersion).isNotNull()
+        assertThat(reader.lotNumber).isEqualTo(response.lotNumber)
+        assertThat(reader.podSequenceNumber).isEqualTo(response.podSequenceNumber)
+        assertThat(reader.lastStatusResponseReceived).isNotNull()
+    }
+
+    @Test
+    fun `updateFromDefaultStatusResponse persists the parsed status fields`() {
+        val response = DefaultStatusResponse(hexToBytes("1D1800A02800000463FF"))
+        val writer = newManager()
+
+        writer.updateFromDefaultStatusResponse(response)
+
+        val reader = newManager()
+        assertThat(reader.podStatus).isEqualTo(response.podStatus)
+        assertThat(reader.deliveryStatus).isEqualTo(response.deliveryStatus)
+        assertThat(reader.totalPulsesDelivered).isEqualTo(response.totalPulsesDelivered)
+        assertThat(reader.reservoirPulsesRemaining).isEqualTo(response.reservoirPulsesRemaining)
+        assertThat(reader.minutesSinceActivation).isEqualTo(response.minutesSinceActivation)
+    }
+
+    @Test
+    fun `updateFromAlarmStatusResponse persists the parsed alarm fields`() {
+        val response = AlarmStatusResponse(hexToBytes("021602080100000501BD00000003FF01950000000000670A"))
+        val writer = newManager()
+
+        writer.updateFromAlarmStatusResponse(response)
+
+        val reader = newManager()
+        assertThat(reader.alarmType).isEqualTo(response.alarmType)
+        assertThat(reader.alarmTime).isEqualTo(response.alarmTime)
+        assertThat(reader.occlusionAlarm).isEqualTo(response.occlusionAlarm)
+        assertThat(reader.podStatusWhenAlarmOccurred).isEqualTo(response.podStatusWhenAlarmOccurred)
+        assertThat(reader.rssi).isEqualTo(response.rssi)
+    }
+
+    @Test
+    fun `updateFromActivationTimeResponse persists podActivatedAt as an epoch millis Long`() {
+        val bytes = byteArrayOf(
+            0x02, 0x11, 0x05,
+            0x14, // faultEventCode = ALARM_OCCLUDED
+            0x00, 0x7D, // faultTime = 125
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x07, // month
+            0x0F, // day
+            0x1A, // year (2026)
+            0x09, // hour
+            0x1E  // minute
+        )
+        val response = PodInfoActivationTimeResponse(bytes)
+        val writer = newManager()
+
+        writer.updateFromActivationTimeResponse(response)
+
+        val reader = newManager()
+        assertThat(reader.alarmType).isEqualTo(AlarmType.ALARM_OCCLUDED)
+        assertThat(reader.alarmTime).isEqualTo(125.toShort())
+        val activatedAt = requireNotNull(reader.podActivatedAt)
+        val calendar = java.util.Calendar.getInstance()
+        calendar.timeInMillis = activatedAt
+        assertThat(calendar[java.util.Calendar.YEAR]).isEqualTo(2026)
+        assertThat(calendar[java.util.Calendar.MONTH]).isEqualTo(java.util.Calendar.JULY)
+        assertThat(calendar[java.util.Calendar.DAY_OF_MONTH]).isEqualTo(15)
+    }
+
+    @Test
+    fun `updateFromTriggeredAlertsResponse persists the AlertType-to-Short map through Gson`() {
+        // Gson's default handling of non-String-keyed Maps is worth locking down explicitly -
+        // this is the only Map-typed field in the persisted pod state.
+        val bytes = byteArrayOf(
+            0x02, 0x13, 0x01,
+            0x00, 0x00,
+            0x00, 0x00, // AUTO_OFF = 0 (dropped, never triggered)
+            0x00, 0x0A, // MULTI_COMMAND = 10
+            0x00, 0x00,
+            0x00, 0x00,
+            0x00, 0x78, // LOW_RESERVOIR = 120
+            0x00, 0x00,
+            0x00, 0x00,
+            0x01, 0x2C  // EXPIRATION = 300
+        )
+        val response = PodInfoTriggeredAlertsResponse(bytes)
+        val writer = newManager()
+
+        writer.updateFromTriggeredAlertsResponse(response)
+
+        val reader = newManager()
+        val triggered = requireNotNull(reader.triggeredAlertTimes)
+        assertThat(triggered).containsExactly(
+            AlertType.MULTI_COMMAND, 10.toShort(),
+            AlertType.LOW_RESERVOIR, 120.toShort(),
+            AlertType.EXPIRATION, 300.toShort()
+        )
+    }
+
+    @Test
+    fun `load() falls back to defaults when the stored JSON is corrupted`() {
+        backingStore = "{ not valid json"
+
+        val manager = newManager()
+
+        assertThat(manager.activationProgress).isEqualTo(ActivationProgress.NOT_STARTED)
         assertThat(manager.ltk).isNull()
     }
 }
