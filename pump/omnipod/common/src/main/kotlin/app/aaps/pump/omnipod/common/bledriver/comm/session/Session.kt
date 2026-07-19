@@ -111,14 +111,26 @@ class Session(
         val data = parseKeys(arrayOf(RESPONSE_PREFIX), decrypted.payload)[0]
         aapsLogger.info(LTag.PUMPBTCOMM, "Received decrypted response: ${data.toHex()} in packet: $decrypted")
 
-        // TODO verify length
-
-        // val uniqueId = data.copyOfRange(0, 4)
-        // val lenghtAndSequenceNumber = data.copyOfRange(4, 6)
+        // Left deliberately non-enforcing: no reference implementation of this specific
+        // envelope's uniqueId/sequenceNumber/CRC check was found in OmnipodKit (its own
+        // PodCommsSession.swift doesn't appear to validate this text-wrapped "0.0=..." framing
+        // either), and this envelope's CRC algorithm hasn't been confirmed to match any of the
+        // CRC variants already in this codebase (MessageUtil.createCrc, crc16XMODEM). Adding
+        // enforcement here on an unconfirmed guess - in a code path that has never run against
+        // real hardware - risks rejecting genuinely valid responses, which is worse than the
+        // current permissive behavior. Logged instead, so a real mismatch is at least visible.
+        if (data.size < RESPONSE_ENVELOPE_MIN_SIZE) {
+            aapsLogger.warn(LTag.PUMPBTCOMM, "Response envelope shorter than expected (${data.size} bytes): ${data.toHex()}")
+        } else {
+            val uniqueId = data.copyOfRange(0, 4)
+            val lengthAndSequenceNumber = data.copyOfRange(4, 6)
+            val crc = data.copyOfRange(data.size - 2, data.size)
+            aapsLogger.debug(
+                LTag.PUMPBTCOMM,
+                "Response envelope fields: uniqueId=${uniqueId.toHex()}, lengthAndSequenceNumber=${lengthAndSequenceNumber.toHex()}, crc=${crc.toHex()}"
+            )
+        }
         val payload = data.copyOfRange(6, data.size - 2)
-        // val crc = data.copyOfRange(data.size - 2, data.size)
-
-        // TODO validate uniqueId, sequenceNumber and crc
 
         return ResponseUtil.parseResponse(payload)
     }
@@ -162,6 +174,9 @@ class Session(
         private const val COMMAND_PREFIX = "S0.0="
         private const val COMMAND_SUFFIX = ",G0.0"
         private const val RESPONSE_PREFIX = "0.0="
+
+        /** 4-byte uniqueId + 2-byte length/sequence + 2-byte CRC surrounding the payload. */
+        private const val RESPONSE_ENVELOPE_MIN_SIZE = 8
 
         private const val MAX_TRIES = 4
     }
