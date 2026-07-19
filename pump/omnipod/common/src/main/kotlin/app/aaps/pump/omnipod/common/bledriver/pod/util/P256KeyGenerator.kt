@@ -8,6 +8,7 @@ import java.security.spec.ECGenParameterSpec
 import java.security.spec.ECParameterSpec
 import java.security.spec.ECPoint
 import javax.crypto.KeyAgreement
+import javax.inject.Inject
 
 /**
  * NIST P-256 (secp256r1) key generation and ECDH key agreement for Omnipod 5 pairing.
@@ -23,7 +24,7 @@ import javax.crypto.KeyAgreement
  * which also returns the raw (un-hashed) agreed secret. Any KDF/hashing on top of this
  * shared secret is the caller's responsibility, same as with the Swift original.
  */
-class P256KeyGenerator {
+class P256KeyGenerator @Inject constructor() {
 
     fun generatePrivateKey(): ByteArray {
         val keyPairGenerator = KeyPairGenerator.getInstance("EC")
