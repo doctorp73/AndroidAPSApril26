@@ -1,6 +1,7 @@
 package app.aaps.pump.omnipod.common.bledriver.pod.response
 
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlarmType
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.PulseLogEntry
 import app.aaps.pump.omnipod.common.bledriver.pod.response.ResponseType.StatusResponseType
 import app.aaps.pump.omnipod.common.bledriver.pod.util.byValue
 import java.nio.ByteBuffer
@@ -23,6 +24,10 @@ class PodInfoPulseLogPlusResponse(
     val entrySize: Int = encoded[8].toInt() and 0xff
     val maxEntries: Int = encoded[9].toInt() and 0xff
     val pulseLog: List<Int>
+
+    /** [pulseLog] decoded per-entry - see [PulseLogEntry]'s doc comment for what's confirmed
+     *  vs. left as raw diagnostic values. */
+    val decodedPulseLog: List<PulseLogEntry> by lazy { PulseLogEntry.decodeAll(pulseLog) }
 
     init {
         require(entrySize == 4) { "Unexpected pulseLogPlus entry size: $entrySize" }

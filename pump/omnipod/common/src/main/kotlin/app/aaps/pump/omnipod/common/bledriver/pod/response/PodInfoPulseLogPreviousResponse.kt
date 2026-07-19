@@ -1,5 +1,6 @@
 package app.aaps.pump.omnipod.common.bledriver.pod.response
 
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.PulseLogEntry
 import app.aaps.pump.omnipod.common.bledriver.pod.response.ResponseType.StatusResponseType
 import java.nio.ByteBuffer
 
@@ -21,6 +22,10 @@ class PodInfoPulseLogPreviousResponse(
      *  returned in this payload, matching OmnipodKit's own cross-check. */
     val nEntries: Int = ByteBuffer.wrap(byteArrayOf(encoded[3], encoded[4])).short.toInt() and 0xffff
     val pulseLog: List<Int>
+
+    /** [pulseLog] decoded per-entry - see [PulseLogEntry]'s doc comment for what's confirmed
+     *  vs. left as raw diagnostic values. */
+    val decodedPulseLog: List<PulseLogEntry> by lazy { PulseLogEntry.decodeAll(pulseLog) }
 
     init {
         val logStartOffset = 5
