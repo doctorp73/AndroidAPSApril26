@@ -12,9 +12,12 @@ import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.SoftwareVersion
 import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoActivationTimeResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoTriggeredAlertsResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.SetUniqueIdResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import java.io.Serializable
+import java.util.Calendar
 import java.util.EnumSet
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -160,9 +163,32 @@ interface O5PodStateManager {
     val podStatusWhenAlarmOccurred: PodStatus?
     val rssi: Short?
 
+    // -- on-demand diagnostics, populated from status pages 5/1 --------------------------
+    // Fetched conditionally (not on every poll) by O5PumpPlugin.fetchStatus - see that
+    // method's doc comment.
+
+    /** Wall-clock epoch millis the pod was activated, computed from status page 5's
+     *  date fields - unlike [minutesSinceActivation], this survives across app
+     *  restarts without drifting (it isn't a relative counter). Null until page 5 has
+     *  been fetched at least once. */
+    val podActivatedAt: Long?
+
+    /** Pod-clock minutes-since-activation each [AlertType] slot last triggered, from
+     *  status page 1. Only contains entries for slots that have actually triggered
+     *  (value 0 = never triggered, per OmnipodKit's own convention, so those are
+     *  filtered out here). Null until page 1 has been fetched at least once. */
+    val triggeredAlertTimes: Map<AlertType, Short>?
+
     fun updateFromVersionResponse(response: VersionResponse)
     fun updateFromDefaultStatusResponse(response: DefaultStatusResponse)
     fun updateFromAlarmStatusResponse(response: AlarmStatusResponse)
+
+    /** Populates [podActivatedAt] plus [alarmType]/[alarmTime] (page 5 reports the same
+     *  fault info [AlarmStatusResponse] does). */
+    fun updateFromActivationTimeResponse(response: PodInfoActivationTimeResponse)
+
+    /** Populates [triggeredAlertTimes] from page 1's 8 alert-slot values. */
+    fun updateFromTriggeredAlertsResponse(response: PodInfoTriggeredAlertsResponse)
 
     /** Populates the prime-bolus parameters ([primePulseRate], [firstPrimeBolusVolume],
      *  [secondPrimeBolusVolume], [podLifeInHours]) plus version/status/lot/sequence
@@ -269,6 +295,11 @@ class InMemoryO5PodStateManager : O5PodStateManager {
     @Volatile override var rssi: Short? = null
         private set
 
+    @Volatile override var podActivatedAt: Long? = null
+        private set
+    @Volatile override var triggeredAlertTimes: Map<AlertType, Short>? = null
+        private set
+
     override fun increaseEapAkaSequenceNumber(): ByteArray {
         pendingEapAkaSequenceNumber = eapAkaSequenceNumber + 1
         return EapSqn(pendingEapAkaSequenceNumber).value
@@ -321,6 +352,19 @@ class InMemoryO5PodStateManager : O5PodStateManager {
         podStatusWhenAlarmOccurred = response.podStatusWhenAlarmOccurred
         rssi = response.rssi
         lastStatusResponseReceived = System.currentTimeMillis()
+    }
+
+    override fun updateFromActivationTimeResponse(response: PodInfoActivationTimeResponse) {
+        val calendar = Calendar.getInstance()
+        calendar.set(2000 + response.year, response.month - 1, response.day, response.hour, response.minute, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        podActivatedAt = calendar.timeInMillis
+        alarmType = response.faultEventCode
+        alarmTime = response.faultTime
+    }
+
+    override fun updateFromTriggeredAlertsResponse(response: PodInfoTriggeredAlertsResponse) {
+        triggeredAlertTimes = response.alertActivations.filterValues { it != 0.toShort() }
     }
 
     override fun updateFromSetUniqueIdResponse(response: SetUniqueIdResponse) {
@@ -379,5 +423,7 @@ class InMemoryO5PodStateManager : O5PodStateManager {
         occlusionAlarm = null
         podStatusWhenAlarmOccurred = null
         rssi = null
+        podActivatedAt = null
+        triggeredAlertTimes = null
     }
 }

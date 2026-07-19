@@ -173,6 +173,14 @@ class O5OverviewViewModel @Inject constructor(
             } ?: PLACEHOLDER
             add(PumpInfoRow(label = rh.gs(CommonR.string.omnipod_common_overview_time_on_pod), value = timeOnPodValue))
 
+            // Real wall-clock activation date from status page 5 (fetched on-demand, see
+            // O5PumpPlugin.fetchActivationTimeIfNeeded) - unlike timeOnPodValue above, this
+            // doesn't drift and survives app restarts, since it isn't derived from a
+            // relative pod-clock counter.
+            podStateManager.podActivatedAt?.let {
+                add(PumpInfoRow(label = rh.gs(CommonR.string.omnipod_common_overview_pod_activated_at), value = dateUtil.dateAndTimeString(it)))
+            }
+
             val expiresAt = podStateManager.expiry
             val expiryValue = expiresAt?.let { dateUtil.dateAndTimeString(it.toEpochSecond() * 1000) } ?: PLACEHOLDER
             val expiryLevel = when {
@@ -211,11 +219,16 @@ class O5OverviewViewModel @Inject constructor(
             } ?: PLACEHOLDER
             add(PumpInfoRow(label = rh.gs(CommonR.string.omnipod_common_overview_total_delivered), value = totalDelivered))
 
-            val alertsText = podStateManager.activeAlerts?.let { it.joinToString("\n") { t -> translatedActiveAlert(t) } } ?: PLACEHOLDER
+            val alertsText = podStateManager.activeAlerts?.let { alerts ->
+                alerts.joinToString("\n") { t -> translatedActiveAlert(t) + (triggeredAlertTimeSuffix(t) ?: "") }
+            } ?: PLACEHOLDER
             add(PumpInfoRow(label = rh.gs(CommonR.string.omnipod_common_overview_pod_active_alerts), value = alertsText))
 
             val errors = buildList {
-                podStateManager.alarmType?.let { add(rh.gs(CommonR.string.omnipod_common_pod_status_pod_fault_description, it.value, it.toString())) }
+                podStateManager.alarmType?.let { alarm ->
+                    add(rh.gs(CommonR.string.omnipod_common_pod_status_pod_fault_description, alarm.value, alarm.toString()))
+                    faultTimeText()?.let { add(rh.gs(CommonR.string.omnipod_common_two_strings_concatenated_by_colon, rh.gs(CommonR.string.omnipod_common_pod_fault_time_label), it)) }
+                }
             }
             val errorsText = if (errors.isEmpty()) PLACEHOLDER else errors.joinToString("\n")
             add(PumpInfoRow(label = rh.gs(CoreUiR.string.errors), value = errorsText, level = if (errors.isEmpty()) StatusLevel.NORMAL else StatusLevel.CRITICAL))
@@ -415,6 +428,25 @@ class O5OverviewViewModel @Inject constructor(
             else                          -> CommonR.string.omnipod_common_alert_unknown_alert
         }
         return rh.gs(id)
+    }
+
+    /** " (triggered <duration> ago)"-style suffix for [alert], if page 1 has reported a
+     *  trigger time for it - null otherwise (never triggered, or page 1 not fetched). */
+    private fun triggeredAlertTimeSuffix(alert: AlertType): String? {
+        val triggered = podStateManager.triggeredAlertTimes?.get(alert) ?: return null
+        val minutesSince = podStateManager.minutesSinceActivation ?: return null
+        val elapsed = (minutesSince - triggered).coerceAtLeast(0)
+        return " (${readableDuration(Duration.ofMinutes(elapsed.toLong()))})"
+    }
+
+    /** Elapsed-since-fault text derived from [O5PodStateManager.alarmTime] (a
+     *  pod-clock-relative minutes value, same convention as [O5PodStateManager
+     *  .minutesSinceActivation]) - null until a status read has populated both. */
+    private fun faultTimeText(): String? {
+        val alarmTime = podStateManager.alarmTime ?: return null
+        val minutesSince = podStateManager.minutesSinceActivation ?: return null
+        val elapsed = (minutesSince - alarmTime).coerceAtLeast(0)
+        return readableDuration(Duration.ofMinutes(elapsed.toLong()))
     }
 
     private fun readableDuration(duration: Duration): String {

@@ -14,11 +14,14 @@ import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.SoftwareVersion
 import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoActivationTimeResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoTriggeredAlertsResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.SetUniqueIdResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import app.aaps.pump.omnipod.common.keys.O5StringNonPreferenceKey
 import com.google.gson.Gson
 import java.io.Serializable
+import java.util.Calendar
 import java.util.EnumSet
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -236,6 +239,9 @@ class PersistedO5PodStateManager @Inject constructor(
     override val podStatusWhenAlarmOccurred: PodStatus? get() = podState.podStatusWhenAlarmOccurred
     override val rssi: Short? get() = podState.rssi
 
+    override val podActivatedAt: Long? get() = podState.podActivatedAt
+    override val triggeredAlertTimes: Map<AlertType, Short>? get() = podState.triggeredAlertTimes
+
     override fun increaseEapAkaSequenceNumber(): ByteArray {
         pendingEapAkaSequenceNumber = eapAkaSequenceNumber + 1
         return EapSqn(pendingEapAkaSequenceNumber).value
@@ -296,6 +302,21 @@ class PersistedO5PodStateManager @Inject constructor(
         podState.podStatusWhenAlarmOccurred = response.podStatusWhenAlarmOccurred
         podState.rssi = response.rssi
         podState.lastStatusResponseReceived = System.currentTimeMillis()
+        store()
+    }
+
+    override fun updateFromActivationTimeResponse(response: PodInfoActivationTimeResponse) {
+        val calendar = Calendar.getInstance()
+        calendar.set(2000 + response.year, response.month - 1, response.day, response.hour, response.minute, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        podState.podActivatedAt = calendar.timeInMillis
+        podState.alarmType = response.faultEventCode
+        podState.alarmTime = response.faultTime
+        store()
+    }
+
+    override fun updateFromTriggeredAlertsResponse(response: PodInfoTriggeredAlertsResponse) {
+        podState.triggeredAlertTimes = response.alertActivations.filterValues { it != 0.toShort() }
         store()
     }
 
@@ -388,6 +409,8 @@ class PersistedO5PodStateManager @Inject constructor(
         var alarmTime: Short? = null,
         var occlusionAlarm: Boolean? = null,
         var podStatusWhenAlarmOccurred: PodStatus? = null,
-        var rssi: Short? = null
+        var rssi: Short? = null,
+        var podActivatedAt: Long? = null,
+        var triggeredAlertTimes: Map<AlertType, Short>? = null
     ) : Serializable
 }

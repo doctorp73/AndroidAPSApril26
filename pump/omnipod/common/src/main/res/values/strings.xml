@@ -52,6 +52,7 @@
     <string name="omnipod_common_overview_pod_active_alerts">Active Pod Alerts</string>
     <string name="omnipod_common_overview_firmware_version">Firmware Version</string>
     <string name="omnipod_common_overview_time_on_pod">Time on Pod</string>
+    <string name="omnipod_common_overview_pod_activated_at">Pod Activated At</string>
     <string name="omnipod_common_uncertain">uncertain</string>
 
     <!-- Omnipod - Wizard Base -->
@@ -117,6 +118,7 @@
     <string name="omnipod_common_pod_status_pod_fault">Pod Fault</string>
     <string name="omnipod_common_pod_status_inactive">Inactive</string>
     <string name="omnipod_common_pod_status_pod_fault_description">Pod Fault: %1$03d %2$s</string>
+    <string name="omnipod_common_pod_fault_time_label">Fault Occurred</string>
 
     <!-- Omnipod - Alerts -->
     <string name="omnipod_common_alert_expiration">Pod will expire soon</string>

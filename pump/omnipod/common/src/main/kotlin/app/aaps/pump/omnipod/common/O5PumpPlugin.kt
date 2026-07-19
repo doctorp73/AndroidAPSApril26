@@ -44,6 +44,8 @@ import app.aaps.pump.omnipod.common.bledriver.pod.definition.O5_FIXED_NONCE
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodConstants
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.ProgramReminder
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoActivationTimeResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoTriggeredAlertsResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.ResponseType
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
 import app.aaps.pump.omnipod.common.keys.OmnipodBooleanPreferenceKey
@@ -251,6 +253,36 @@ class O5PumpPlugin @Inject constructor(
             .setStatusResponseType(ResponseType.StatusResponseType.DEFAULT_STATUS_RESPONSE)
             .build()
         bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements()
+    }
+        .andThen(Completable.defer { fetchActivationTimeIfNeeded() })
+        .andThen(Completable.defer { fetchTriggeredAlertsIfNeeded() })
+
+    /**
+     * Status pages 5/1 carry diagnostic data only relevant once something's actually
+     * wrong or alerting - fetched conditionally, on top of the default status poll
+     * above, rather than on every 15s poll. State is populated as a side effect of
+     * [O5BleManager.sendCommand] via [O5BleManagerImpl]'s `recordStatusIfPresent`,
+     * same as every other response type, so nothing further is done with the result
+     * here - see [O5PodStateManager.podActivatedAt]/[O5PodStateManager.triggeredAlertTimes].
+     */
+    private fun fetchActivationTimeIfNeeded(): Completable {
+        if (podStateManager.alarmType == null || podStateManager.podActivatedAt != null) return Completable.complete()
+        val cmd = GetStatusCommand.Builder()
+            .setUniqueId(requirePodId())
+            .setSequenceNumber(podStateManager.msgSequenceNumber.toShort())
+            .setStatusResponseType(ResponseType.StatusResponseType.STATUS_RESPONSE_PAGE_5)
+            .build()
+        return bleManager.sendCommand(cmd, PodInfoActivationTimeResponse::class).ignoreElements()
+    }
+
+    private fun fetchTriggeredAlertsIfNeeded(): Completable {
+        if (podStateManager.activeAlerts?.isNotEmpty() != true) return Completable.complete()
+        val cmd = GetStatusCommand.Builder()
+            .setUniqueId(requirePodId())
+            .setSequenceNumber(podStateManager.msgSequenceNumber.toShort())
+            .setStatusResponseType(ResponseType.StatusResponseType.STATUS_RESPONSE_PAGE_1)
+            .build()
+        return bleManager.sendCommand(cmd, PodInfoTriggeredAlertsResponse::class).ignoreElements()
     }
 
     /**

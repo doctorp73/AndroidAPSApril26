@@ -37,6 +37,8 @@ import app.aaps.pump.omnipod.common.bledriver.pod.command.base.Command
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodType
 import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.DefaultStatusResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoActivationTimeResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoTriggeredAlertsResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.Response
 import app.aaps.pump.omnipod.common.bledriver.pod.response.SetUniqueIdResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
@@ -147,11 +149,13 @@ class O5BleManagerImpl @Inject constructor(
 
     private fun recordStatusIfPresent(response: Response) {
         when (response) {
-            is VersionResponse       -> podState.updateFromVersionResponse(response)
-            is DefaultStatusResponse -> podState.updateFromDefaultStatusResponse(response)
-            is AlarmStatusResponse   -> podState.updateFromAlarmStatusResponse(response)
-            is SetUniqueIdResponse   -> podState.updateFromSetUniqueIdResponse(response)
-            else                     -> Unit // other response types (Nak) don't carry general status
+            is VersionResponse                -> podState.updateFromVersionResponse(response)
+            is DefaultStatusResponse           -> podState.updateFromDefaultStatusResponse(response)
+            is AlarmStatusResponse             -> podState.updateFromAlarmStatusResponse(response)
+            is SetUniqueIdResponse             -> podState.updateFromSetUniqueIdResponse(response)
+            is PodInfoActivationTimeResponse   -> podState.updateFromActivationTimeResponse(response)
+            is PodInfoTriggeredAlertsResponse  -> podState.updateFromTriggeredAlertsResponse(response)
+            else                               -> Unit // other response types (Nak, pulse-log dumps) don't carry general status
         }
     }
 
