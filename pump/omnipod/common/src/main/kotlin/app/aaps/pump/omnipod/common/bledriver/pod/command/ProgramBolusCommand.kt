@@ -9,6 +9,15 @@ import app.aaps.pump.omnipod.common.bledriver.pod.util.MessageUtil
 import java.nio.ByteBuffer
 
 // NOT SUPPORTED: extended bolus
+//
+// Two wire formats exist for this command, both under commandType 0x17 - confirmed against
+// OmnipodKit's BolusExtraCommand.swift, whose own comment documents both explicitly:
+//   17 LL BO NNNN XXXXXXXX YYYY ZZZZZZZZ                (Eros/Dash - LL=0x0d, 13-byte body)
+//   17 LL BO NNNN XXXXXXXX YYYY ZZZZZZZZ BB MMMM CCCC   (O5 - LL=0x12, 18-byte body)
+// The O5 format has 5 mandatory extra trailing bytes (bolusSource/mealUnits/correctionUnits)
+// that Eros/Dash doesn't send - not optional metadata, a structurally different, longer
+// command. [o5BolusInfo] being null selects the original Dash/Eros format (still used by
+// OmnipodDashManagerImpl, which never sets it); non-null selects the O5 format.
 class ProgramBolusCommand private constructor(
     private val interlockCommand: ProgramInsulinCommand,
     uniqueId: Int,
@@ -16,20 +25,38 @@ class ProgramBolusCommand private constructor(
     multiCommandFlag: Boolean,
     private val programReminder: ProgramReminder,
     private val numberOfTenthPulses: Short,
-    private val delayUntilFirstTenthPulseInUsec: Int
+    private val delayUntilFirstTenthPulseInUsec: Int,
+    private val o5BolusInfo: O5BolusInfo?
 ) : HeaderEnabledCommand(CommandType.PROGRAM_BOLUS, uniqueId, sequenceNumber, multiCommandFlag) {
+
+    /** The O5-only trailing fields - see this class's doc comment. [bolusSource] is
+     *  "typically 1" per OmnipodKit's own comment; [mealUnitsTenthPulses]/
+     *  [correctionUnitsTenthPulses] are 0 for prime/cannula-insertion boluses. */
+    class O5BolusInfo(
+        val bolusSource: Byte,
+        val mealUnitsTenthPulses: Short,
+        val correctionUnitsTenthPulses: Short
+    )
 
     override val encoded: ByteArray
         get() {
-            val bolusCommand = ByteBuffer.allocate(LENGTH.toInt())
+            val length = if (o5BolusInfo != null) O5_LENGTH else LENGTH
+            val bodyLength = if (o5BolusInfo != null) O5_BODY_LENGTH else BODY_LENGTH
+            val bolusCommandBuffer = ByteBuffer.allocate(length.toInt())
                 .put(commandType.value)
-                .put(BODY_LENGTH)
+                .put(bodyLength)
                 .put(programReminder.encoded)
                 .putShort(numberOfTenthPulses)
                 .putInt(delayUntilFirstTenthPulseInUsec)
                 .putShort(0.toShort()) // Extended bolus pulses
                 .putInt(0) // Delay between tenth extended pulses in usec
-                .array()
+            if (o5BolusInfo != null) {
+                bolusCommandBuffer
+                    .put(o5BolusInfo.bolusSource)
+                    .putShort(o5BolusInfo.mealUnitsTenthPulses)
+                    .putShort(o5BolusInfo.correctionUnitsTenthPulses)
+            }
+            val bolusCommand = bolusCommandBuffer.array()
             val interlockCommand = interlockCommand.encoded
             val header: ByteArray = encodeHeader(
                 uniqueId,
@@ -52,6 +79,7 @@ class ProgramBolusCommand private constructor(
             ", programReminder=" + programReminder +
             ", numberOfTenthPulses=" + numberOfTenthPulses +
             ", delayUntilFirstTenthPulseInUsec=" + delayUntilFirstTenthPulseInUsec +
+            ", o5BolusInfo=" + (o5BolusInfo != null) +
             ", commandType=" + commandType +
             ", uniqueId=" + uniqueId +
             ", sequenceNumber=" + sequenceNumber +
@@ -64,6 +92,8 @@ class ProgramBolusCommand private constructor(
         private var numberOfUnits: Double? = null
         private var delayBetweenPulsesInEighthSeconds: Byte? = null
         private var programReminder: ProgramReminder? = null
+        private var mealUnits: Double? = null
+        private var correctionUnits: Double? = null
 
         fun setNumberOfUnits(numberOfUnits: Double): Builder {
             require(numberOfUnits > 0.0) { "Number of units should be greater than zero" }
@@ -79,6 +109,14 @@ class ProgramBolusCommand private constructor(
 
         fun setProgramReminder(programReminder: ProgramReminder): Builder {
             this.programReminder = programReminder
+            return this
+        }
+
+        /** O5 only - selects the O5 wire format (see this class's doc comment). Must NOT be
+         *  called for Dash/Eros, which use the original, shorter format instead. */
+        fun setO5BolusInfo(mealUnits: Double, correctionUnits: Double): Builder {
+            this.mealUnits = mealUnits
+            this.correctionUnits = correctionUnits
             return this
         }
 
@@ -102,6 +140,13 @@ class ProgramBolusCommand private constructor(
                 ProgramInsulinCommand.DeliveryType.BOLUS
             )
             val delayUntilFirstTenthPulseInUsec = delayBetweenPulsesInEighthSeconds!! / 8 * 100000
+            val o5BolusInfo = mealUnits?.let { meal ->
+                O5BolusInfo(
+                    bolusSource = O5_BOLUS_SOURCE,
+                    mealUnitsTenthPulses = Math.round(meal * 200).toShort(),
+                    correctionUnitsTenthPulses = Math.round((correctionUnits ?: 0.0) * 200).toShort()
+                )
+            }
             return ProgramBolusCommand(
                 interlockCommand,
                 uniqueId!!,
@@ -109,7 +154,8 @@ class ProgramBolusCommand private constructor(
                 multiCommandFlag,
                 programReminder!!,
                 (numberOfPulses * 10).toShort(),
-                delayUntilFirstTenthPulseInUsec
+                delayUntilFirstTenthPulseInUsec,
+                o5BolusInfo
             )
         }
     }
@@ -118,6 +164,10 @@ class ProgramBolusCommand private constructor(
 
         private const val LENGTH: Short = 15
         private const val BODY_LENGTH: Byte = 13
+        private const val O5_LENGTH: Short = 20
+        private const val O5_BODY_LENGTH: Byte = 18
+        private const val O5_BOLUS_SOURCE: Byte = 1
+
         private fun calculateChecksum(numberOfSlots: Byte, byte10And11: Short, numberOfPulses: Short): Short {
             return MessageUtil.calculateChecksum(
                 ByteBuffer.allocate(7)

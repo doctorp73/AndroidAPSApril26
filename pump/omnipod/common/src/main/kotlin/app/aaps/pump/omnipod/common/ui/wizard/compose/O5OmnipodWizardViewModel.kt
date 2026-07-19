@@ -244,6 +244,9 @@ class O5OmnipodWizardViewModel @Inject constructor(
                     .setNumberOfUnits(firstPrimeBolusVolume * PodConstants.POD_PULSE_BOLUS_UNITS)
                     .setDelayBetweenPulsesInEighthSeconds(primePulseRate.toByte())
                     .setProgramReminder(ProgramReminder(atStart = false, atEnd = false, atInterval = 0))
+                    // 0/0 for prime and cannula-insertion boluses, matching OmnipodKit's own
+                    // BolusExtraCommand.swift fixture comment exactly.
+                    .setO5BolusInfo(mealUnits = 0.0, correctionUnits = 0.0)
                     .build()
                 bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
                 podStateManager.activationProgress = ActivationProgress.PRIMING
@@ -317,6 +320,9 @@ class O5OmnipodWizardViewModel @Inject constructor(
                     .setNumberOfUnits(secondPrimeBolusVolume * PodConstants.POD_PULSE_BOLUS_UNITS)
                     .setDelayBetweenPulsesInEighthSeconds(primePulseRate.toByte())
                     .setProgramReminder(ProgramReminder(atStart = false, atEnd = false, atInterval = 0))
+                    // 0/0 for prime and cannula-insertion boluses, matching OmnipodKit's own
+                    // BolusExtraCommand.swift fixture comment exactly.
+                    .setO5BolusInfo(mealUnits = 0.0, correctionUnits = 0.0)
                     .build()
                 bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
                 podStateManager.activationProgress = ActivationProgress.INSERTING_CANNULA

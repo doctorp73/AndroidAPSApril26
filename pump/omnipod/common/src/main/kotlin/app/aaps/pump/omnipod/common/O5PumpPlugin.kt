@@ -464,6 +464,12 @@ class O5PumpPlugin @Inject constructor(
                 .setNumberOfUnits(requestedUnits)
                 .setDelayBetweenPulsesInEighthSeconds(BOLUS_DELAY_BETWEEN_PULSES_EIGHTH_SECONDS)
                 .setProgramReminder(ProgramReminder(atStart = bolusBeeps, atEnd = bolusBeeps, atInterval = 0))
+                // AAPS doesn't distinguish meal vs. correction insulin by the time a bolus
+                // reaches the pump driver (deliverTreatment requires carbs == 0 above), so the
+                // whole requested amount is reported as "correction" - matches this codebase's
+                // own accurate characterization better than "meal" would, since every bolus
+                // here comes from AAPS's own dosing algorithm, not a user-entered meal amount.
+                .setO5BolusInfo(mealUnits = 0.0, correctionUnits = requestedUnits)
                 .build()
 
             var deliveredUnits = 0.0
