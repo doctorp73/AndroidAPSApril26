@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test
  *   - Clinical duration: 1.5-3 hours (dose-dependent)
  *
  * Model parameters used:
- *   - Peak: 40 minutes
- *   - DIA: 2.5 hours (150 minutes)
+ *   - Peak: 15 minutes
+ *   - DIA: 1.5 hours (90 minutes)
  *   - Concentration: 1.0 (U100 equivalent)
  */
 class ICfgAfrezzaIobTest {
@@ -29,14 +29,14 @@ class ICfgAfrezzaIobTest {
     fun setup() {
         afrezzaCfg = ICfg(
             insulinLabel = "Afrezza (Inhaled)",
-            peak = 40,       // minutes
-            dia = 2.5,       // hours
+            peak = 15,       // minutes
+            dia = 1.5,       // hours
             concentration = 1.0
         )
         fiaspCfg = ICfg(
             insulinLabel = "Fiasp",
             peak = 55,       // minutes
-            dia = 5.0,       // hours
+            dia = 10.0,      // hours
             concentration = 1.0
         )
         bolus1U = BS(
@@ -58,7 +58,7 @@ class ICfgAfrezzaIobTest {
     @Test
     fun `IOB is zero at DIA`() {
         // At t=DIA (150 minutes), IOB should be exactly 0
-        val iob = afrezzaCfg.iobCalcForTreatment(bolus1U, 150L * 60_000L)
+        val iob = afrezzaCfg.iobCalcForTreatment(bolus1U, 90L * 60_000L)
         assertEquals(0.0, iob.iobContrib, 0.001, "IOB should be 0 at t=DIA")
         assertEquals(0.0, iob.activityContrib, 0.001, "Activity should be 0 at t=DIA")
     }
@@ -66,7 +66,7 @@ class ICfgAfrezzaIobTest {
     @Test
     fun `IOB is zero after DIA`() {
         // At t=DIA+30min, IOB should still be 0
-        val iob = afrezzaCfg.iobCalcForTreatment(bolus1U, 180L * 60_000L)
+        val iob = afrezzaCfg.iobCalcForTreatment(bolus1U, 120L * 60_000L)
         assertEquals(0.0, iob.iobContrib, 0.001, "IOB should be 0 after DIA")
     }
 
@@ -74,7 +74,7 @@ class ICfgAfrezzaIobTest {
     fun `IOB decreases monotonically after peak`() {
         var prevIob = 1.0
         // Check from t=50min to t=150min (after peak, IOB should only decrease)
-        for (t in 50..150 step 5) {
+        for (t in 20..90 step 5) {
             val iob = afrezzaCfg.iobCalcForTreatment(bolus1U, t.toLong() * 60_000L)
             assertTrue(
                 iob.iobContrib <= prevIob + 0.001,
@@ -108,8 +108,8 @@ class ICfgAfrezzaIobTest {
         }
         // Peak should be within +/- 10 minutes of configured peak (40 min)
         assertTrue(
-            maxActivityTime in 30..50,
-            "Peak activity should occur near t=40min, was at t=${maxActivityTime}min"
+            maxActivityTime in 8..25,
+            "Peak activity should occur near t=15min, was at t=${maxActivityTime}min"
         )
     }
 
@@ -127,10 +127,10 @@ class ICfgAfrezzaIobTest {
         )
 
         // At 150 minutes (Afrezza DIA), Afrezza IOB should be ~0, Fiasp still significant
-        val afrezzaIob150 = afrezzaCfg.iobCalcForTreatment(bolus1U, 150L * 60_000L)
+        val afrezzaIob150 = afrezzaCfg.iobCalcForTreatment(bolus1U, 90L * 60_000L)
         val fiaspIob150 = fiaspCfg.iobCalcForTreatment(fiaspBolus, 150L * 60_000L)
 
-        assertEquals(0.0, afrezzaIob150.iobContrib, 0.001, "Afrezza IOB should be ~0 at t=150min")
+        assertEquals(0.0, afrezzaIob150.iobContrib, 0.001, "Afrezza IOB should be ~0 at t=90min")
         assertTrue(
             fiaspIob150.iobContrib > 0.05,
             "Fiasp IOB should still be significant at t=150min, was ${fiaspIob150.iobContrib}"

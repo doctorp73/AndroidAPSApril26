@@ -59,16 +59,6 @@ class EversenseGattCallback(
         // A value of 3 allows transient glitches to recover without internet, while still
         // falling back to full auth after sustained failures.
         private const val SHORTCUT_FAIL_THRESHOLD = 3
-
-        // FIX 13: Stale-connection watchdog. If Android's BLE stack silently hangs a GATT
-        // session (no onConnectionStateChange callback fires - e.g. after RF interference
-        // such as walking through a security/metal detector), 'connected' stays stuck at
-        // true and none of the reactive reconnect logic above ever runs. This watchdog is
-        // NOT triggered by callbacks; it just checks the wall clock periodically and forces
-        // a reconnect if no BLE traffic has been seen for too long while still "connected".
-        // Eversense reads every 5 min, so 7 min gives one missed cycle of buffer.
-        private const val STALE_CONNECTION_THRESHOLD_MS = 7 * 60 * 1000L
-        private const val WATCHDOG_INTERVAL_MS = 60_000L
     }
 
     // FIX 1: Dedicated BLE executor for callbacks; separate network executor for HTTP calls
@@ -85,6 +75,16 @@ class EversenseGattCallback(
     private var payloadSize: Int = 20
     private var security: EversenseSecurityType = EversenseSecurityType.None
     private var cryptoUtil = EversenseCrypto365Util(preferences)
+
+    // Multi-notification response reassembly (SecureV2/365 only). Each notification is framed
+    // with a chunk header: chunk 1 = [chunkIndex=1, totalChunks, 0x01] (3 bytes), chunk 2+ =
+    // [chunkIndex, totalChunks] (2 bytes), followed by that chunk's slice of the [prefix+ciphertext]
+    // blob. Most responses fit in one chunk, but bulk historical log reads can span several —
+    // decrypting a lone chunk 1 of N>1 always fails the CCM MAC check since the auth tag covers
+    // the full ciphertext, so chunks must be buffered until the full message has arrived.
+    private var chunkAccumulator: ByteArray = ByteArray(0)
+    private var chunkTotalExpected: Int = 1
+    private var chunkNextIndex: Int = 1
 
     // FIX 2: Use AtomicReference for currentPacket to avoid the race condition where a stale
     // BLE notification could be processed against the wrong packet between assignment and write.
@@ -107,34 +107,6 @@ class EversenseGattCallback(
     // sustained failures to avoid draining the battery.
     @Volatile
     private var reconnectAttempts: Int = 0
-
-    // FIX 13: Timestamp of the last confirmed BLE activity (successful connect or any
-    // characteristic notification). Used by the stale-connection watchdog below.
-    @Volatile
-    private var lastActivityTimestamp: Long = System.currentTimeMillis()
-
-    // FIX 13: Watchdog loop - reschedules itself every WATCHDOG_INTERVAL_MS regardless of
-    // connection state, so it keeps running even if a disconnect callback never fires.
-    private val staleConnectionWatchdog = object : Runnable {
-        override fun run() {
-            val idleMs = System.currentTimeMillis() - lastActivityTimestamp
-            if (connected && idleMs > STALE_CONNECTION_THRESHOLD_MS) {
-                EversenseLogger.warning(
-                    TAG,
-                    "Watchdog: no BLE activity for " + (idleMs / 1000) + "s while marked connected - " +
-                        "assuming hung GATT session, forcing reconnect"
-                )
-                connected = false
-                transmitterReady = false
-                handler.post {
-                    plugin.watchers.forEach { it.onConnectionChanged(false) }
-                }
-                cleanUp()
-                plugin.connect(null)
-            }
-            handler.postDelayed(this, WATCHDOG_INTERVAL_MS)
-        }
-    }
 
     // Persistent reconnect: retries every 60s indefinitely while disconnected.
     // Android autoConnect gives up silently after ~30 min on Samsung devices.
@@ -214,11 +186,6 @@ class EversenseGattCallback(
             reconnectAttempts = 0
             failedConnectionAttempts = 0
             handler.removeCallbacks(persistentReconnectRunnable)
-
-            // FIX 13: (re)start the stale-connection watchdog and reset its clock.
-            lastActivityTimestamp = System.currentTimeMillis()
-            handler.removeCallbacks(staleConnectionWatchdog)
-            handler.postDelayed(staleConnectionWatchdog, WATCHDOG_INTERVAL_MS)
 
             preferences.edit(commit = true) {
                 putString(StorageKeys.REMOTE_DEVICE_KEY, gatt.device.address)
@@ -417,16 +384,54 @@ class EversenseGattCallback(
         handleCharacteristicChanged(gatt, characteristic.value)
     }
 
+    // Returns the reassembled [prefix+ciphertext] blob once all chunks of a message have
+    // arrived, or null while still waiting on more chunks. A malformed/out-of-sequence chunk
+    // discards whatever was in progress rather than risk splicing mismatched chunks together.
+    private fun accumulateChunk(rawData: ByteArray): ByteArray? {
+        if (rawData.size < 2) {
+            EversenseLogger.warning(TAG, "Chunk too short to contain a header - size: ${rawData.size}")
+            return null
+        }
+
+        val chunkIndex = rawData[0].toInt() and 0xFF
+        val totalChunks = rawData[1].toInt() and 0xFF
+
+        if (chunkIndex == 1) {
+            if (chunkNextIndex != 1) {
+                EversenseLogger.warning(TAG, "New chunk sequence started before previous one (chunk $chunkNextIndex/$chunkTotalExpected) completed - discarding partial data")
+            }
+            chunkAccumulator = rawData.copyOfRange(3, rawData.size)
+            chunkTotalExpected = totalChunks
+            chunkNextIndex = 2
+        } else {
+            if (chunkIndex != chunkNextIndex || totalChunks != chunkTotalExpected) {
+                EversenseLogger.warning(TAG, "Out-of-sequence chunk (got $chunkIndex/$totalChunks, expected $chunkNextIndex/$chunkTotalExpected) - discarding in-progress message")
+                chunkAccumulator = ByteArray(0)
+                chunkTotalExpected = 1
+                chunkNextIndex = 1
+                return null
+            }
+            chunkAccumulator += rawData.copyOfRange(2, rawData.size)
+            chunkNextIndex++
+        }
+
+        if (chunkNextIndex <= chunkTotalExpected) return null
+
+        val complete = chunkAccumulator
+        chunkAccumulator = ByteArray(0)
+        chunkTotalExpected = 1
+        chunkNextIndex = 1
+        return complete
+    }
+
     @SuppressLint("MissingPermission")
     @OptIn(ExperimentalStdlibApi::class)
     private fun handleCharacteristicChanged(gatt: BluetoothGatt, rawData: ByteArray) {
-        // FIX 13: any real notification proves the link is alive; feed the watchdog.
-        lastActivityTimestamp = System.currentTimeMillis()
         EversenseLogger.debug(TAG, "Received data: ${rawData.toHexString()}")
 
         var data = rawData
         if (security == EversenseSecurityType.SecureV2) {
-            data = data.drop(3).toByteArray()
+            data = accumulateChunk(rawData) ?: return
 
             if (data[0] != Eversense365Packets.AuthenticateResponseId) {
                 data = cryptoUtil.decrypt(data)

@@ -57,6 +57,7 @@ import app.aaps.core.ui.compose.navigation.color
 import app.aaps.core.ui.compose.navigation.icon
 import app.aaps.ui.compose.components.ContentContainer
 import app.aaps.ui.compose.treatments.viewmodels.BolusCarbsViewModel
+import app.aaps.core.interfaces.insulin.InsulinType
 
 /**
  * Composable screen displaying boluses and carbs in a combined list.
@@ -314,9 +315,11 @@ private fun MealLinkItem(
                             )
                         }
 
-                        // Insulin label (when different from active)
+                        val isAfrezzaDose = InsulinType.fromPeak(bolus.iCfg.insulinPeakTime).isInhaled
+
+                        // Insulin label (when different from active) — skip for Afrezza, its type label already says so
                         val activeLabel = insulin.iCfg.insulinLabel
-                        if (bolus.iCfg.insulinLabel != activeLabel) {
+                        if (!isAfrezzaDose && bolus.iCfg.insulinLabel != activeLabel) {
                             Text(
                                 text = bolus.iCfg.insulinLabel,
                                 modifier = Modifier.padding(start = 4.dp),
@@ -329,11 +332,14 @@ private fun MealLinkItem(
 
                         // Bolus type — pre-migration text label (the legacy view showed "SMB" / "Meal Bolus" /
                         // "Prime/Fill" here; a carbs icon on a normal/correction bolus was misleading).
+                        // Afrezza is logged as BS.Type.NORMAL but is inhaled, not pump-delivered — labeled distinctly.
                         Text(
-                            text = when (bolus.type) {
-                                BS.Type.SMB     -> stringResource(app.aaps.core.ui.R.string.smb_shortname)
-                                BS.Type.NORMAL  -> stringResource(app.aaps.core.ui.R.string.careportal_mealbolus)
-                                BS.Type.PRIMING -> stringResource(app.aaps.core.ui.R.string.prime_fill)
+                            text = when {
+                                isAfrezzaDose                -> stringResource(app.aaps.core.ui.R.string.afrezza_type_shortname)
+                                bolus.type == BS.Type.SMB     -> stringResource(app.aaps.core.ui.R.string.smb_shortname)
+                                bolus.type == BS.Type.NORMAL  -> stringResource(app.aaps.core.ui.R.string.careportal_mealbolus)
+                                bolus.type == BS.Type.PRIMING -> stringResource(app.aaps.core.ui.R.string.prime_fill)
+                                else                          -> stringResource(app.aaps.core.ui.R.string.careportal_mealbolus)
                             },
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
