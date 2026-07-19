@@ -124,7 +124,7 @@ class O5OverviewViewModel @Inject constructor(
 
         add(
             PumpInfoRow(
-                label = rh.gs(CommonR.string.omnipod_dash_overview_bluetooth_address),
+                label = rh.gs(CommonR.string.omnipod_common_overview_bluetooth_address),
                 value = podStateManager.bluetoothAddress ?: PLACEHOLDER
             )
         )
@@ -133,10 +133,10 @@ class O5OverviewViewModel @Inject constructor(
             val pct = podStateManager.successfulConnections.toDouble() / attempts * 100
             "${podStateManager.successfulConnections}/$attempts :: ${String.format(Locale.getDefault(), "%.2f %%", pct)}"
         } else PLACEHOLDER
-        add(PumpInfoRow(label = rh.gs(CommonR.string.omnipod_dash_overview_bluetooth_connection_quality), value = connQuality))
+        add(PumpInfoRow(label = rh.gs(CommonR.string.omnipod_common_overview_bluetooth_connection_quality), value = connQuality))
 
         if (config.isEngineeringMode()) {
-            add(PumpInfoRow(label = rh.gs(CommonR.string.omnipod_dash_overview_delivery_status), value = podStateManager.deliveryStatus?.toString() ?: PLACEHOLDER))
+            add(PumpInfoRow(label = rh.gs(CommonR.string.omnipod_common_overview_delivery_status), value = podStateManager.deliveryStatus?.toString() ?: PLACEHOLDER))
         }
 
         if (!activated) {
@@ -162,7 +162,7 @@ class O5OverviewViewModel @Inject constructor(
             add(
                 PumpInfoRow(
                     label = rh.gs(CommonR.string.omnipod_common_overview_firmware_version),
-                    value = rh.gs(CommonR.string.omnipod_dash_overview_firmware_version_value, podStateManager.firmwareVersion.toString(), podStateManager.bleVersion.toString())
+                    value = rh.gs(CommonR.string.omnipod_common_overview_firmware_version_value, podStateManager.firmwareVersion.toString(), podStateManager.bleVersion.toString())
                 )
             )
 

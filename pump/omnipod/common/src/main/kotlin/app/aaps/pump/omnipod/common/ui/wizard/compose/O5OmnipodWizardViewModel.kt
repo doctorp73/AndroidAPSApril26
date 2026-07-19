@@ -471,9 +471,9 @@ class O5OmnipodWizardViewModel @Inject constructor(
     override fun getTextForStep(step: OmnipodWizardStep): Int = when (step) {
         // PROFILE_GATE has its own composable that doesn't consume textResId - returned value is unused.
         OmnipodWizardStep.PROFILE_GATE           -> 0
-        OmnipodWizardStep.START_POD_ACTIVATION   -> R.string.omnipod_5_pod_activation_wizard_start_pod_activation_text
+        OmnipodWizardStep.START_POD_ACTIVATION   -> CommonR.string.omnipod_5_pod_activation_wizard_start_pod_activation_text
         OmnipodWizardStep.SELECT_INSULIN         -> app.aaps.core.ui.R.string.select_insulin_description
-        OmnipodWizardStep.INITIALIZE_POD         -> R.string.omnipod_5_pod_activation_wizard_initialize_pod_text
+        OmnipodWizardStep.INITIALIZE_POD         -> CommonR.string.omnipod_5_pod_activation_wizard_initialize_pod_text
         OmnipodWizardStep.SITE_LOCATION          -> app.aaps.core.ui.R.string.select_site_location
         OmnipodWizardStep.ATTACH_POD             -> CommonR.string.omnipod_common_pod_activation_wizard_attach_pod_text
         OmnipodWizardStep.INSERT_CANNULA         -> CommonR.string.omnipod_common_pod_activation_wizard_insert_cannula_text

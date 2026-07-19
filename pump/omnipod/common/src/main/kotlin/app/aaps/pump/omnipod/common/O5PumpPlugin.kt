@@ -259,7 +259,7 @@ class O5PumpPlugin @Inject constructor(
      * every successful status read, so an uncertain outcome is recovered automatically
      * rather than only on the next user-triggered action.
      */
-    private fun reconcilePendingDose() {
+    private suspend fun reconcilePendingDose() {
         val pending = podStateManager.pendingDoseCommand ?: return
         when (pending.type) {
             O5PodStateManager.PendingDoseType.BOLUS              ->
