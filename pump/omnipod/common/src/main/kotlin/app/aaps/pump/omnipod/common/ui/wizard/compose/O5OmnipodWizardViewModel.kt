@@ -113,7 +113,7 @@ class O5OmnipodWizardViewModel @Inject constructor(
         }
     }
 
-    override val pumpSource: Sources = Sources.Omnipod5
+    public override val pumpSource: Sources = Sources.Omnipod5
 
     override fun fallbackICfg(): ICfg? = insulinManager.insulins.firstOrNull()
 

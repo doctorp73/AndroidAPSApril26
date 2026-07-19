@@ -65,6 +65,17 @@ internal class O5OverviewViewModelTest {
 
         // Every info-row / action label goes through rh.gs(Int); unstubbed returns null -> non-null String NPE.
         whenever(rh.gs(any<Int>())).thenReturn("label")
+        // Format-string rows (e.g. firmware_version_value, pod_fault_description) go through
+        // the vararg gs(Int, vararg Any?) overload instead - stub the 2-arg shape used by the
+        // activated-pod branch of buildInfoRows() so it doesn't return null there too.
+        whenever(rh.gs(any<Int>(), any(), any())).thenReturn("label")
+        // podStateManager.podActivatedAt (a mocked Long?) defaults to 0L, not null, so the
+        // "Pod Activated At" row's dateUtil.dateAndTimeString(...) call is reached even in
+        // tests that don't care about it - stub it so that doesn't NPE on an unstubbed String.
+        whenever(dateUtil.dateAndTimeString(any())).thenReturn("date")
+        // Same story for podStateManager.reservoirPulsesRemaining (a mocked Short?, defaults
+        // to 0) - buildReservoir() always reaches ch.insulinAmountString(...) as a result.
+        whenever(ch.insulinAmountString(any())).thenReturn("0 U")
     }
 
     @AfterEach
@@ -99,7 +110,7 @@ internal class O5OverviewViewModelTest {
 
     @Test
     fun noConnectionAttemptsYet_showsPlaceholderBluetoothQuality() {
-        whenever(rh.gs(CommonR.string.omnipod_dash_overview_bluetooth_connection_quality)).thenReturn("BT quality")
+        whenever(rh.gs(CommonR.string.omnipod_common_overview_bluetooth_connection_quality)).thenReturn("BT quality")
         whenever(podStateManager.connectionAttempts).thenReturn(0)
 
         val state = createViewModel().uiState.value
@@ -110,7 +121,7 @@ internal class O5OverviewViewModelTest {
 
     @Test
     fun connectionQuality_reportsSuccessfulOverAttemptedRatio() {
-        whenever(rh.gs(CommonR.string.omnipod_dash_overview_bluetooth_connection_quality)).thenReturn("BT quality")
+        whenever(rh.gs(CommonR.string.omnipod_common_overview_bluetooth_connection_quality)).thenReturn("BT quality")
         whenever(podStateManager.connectionAttempts).thenReturn(10)
         whenever(podStateManager.successfulConnections).thenReturn(8)
 

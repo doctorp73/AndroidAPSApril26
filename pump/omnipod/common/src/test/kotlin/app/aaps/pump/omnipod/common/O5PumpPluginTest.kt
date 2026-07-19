@@ -57,6 +57,14 @@ class O5PumpPluginTest : TestBaseWithProfile() {
             aapsLogger, rh, preferences, commandQueue, bleManager, podStateManager, pumpSync,
             notificationManager, pumpEnactResultProvider, bolusProgressData, protectionCheck, blePreCheck
         )
+        // TestBaseWithProfile's rh mock only stubs a handful of generic strings (ok/error/
+        // mgdl/mmol) - these are the ones O5PumpPlugin itself uses for PumpEnactResult
+        // comments/warnings, needed so String.format(rh.gs(id), ...) doesn't NPE on a null
+        // template in the gs(Int, String) etc. overload stubs.
+        whenever(rh.gs(R.string.omnipod_5_error_not_enough_insulin)).thenReturn("Not enough insulin")
+        whenever(rh.gs(R.string.omnipod_5_error_bolus_already_in_progress)).thenReturn("Bolus already in progress")
+        whenever(rh.gs(R.string.omnipod_5_error_extended_bolus_not_supported)).thenReturn("Extended bolus not supported")
+        whenever(rh.gs(R.string.omnipod_common_error_unsupported_custom_command)).thenReturn("Unsupported custom command: %1\$s")
     }
 
     // -- isBusy / isConnected / isInitialized (the exact bug class already hit once) -------
@@ -171,11 +179,13 @@ class O5PumpPluginTest : TestBaseWithProfile() {
     @Test
     fun `cancelTempBasal is a no-op when nothing is running - never touches the pod`() {
         whenever(podStateManager.deliveryStatus).thenReturn(DeliveryStatus.BASAL_ACTIVE)
-        whenever(pumpSync.expectedPumpState()).thenReturn(
-            PumpSync.PumpState(temporaryBasal = null, extendedBolus = null, bolus = null, profile = null, serialNumber = "")
-        )
 
-        val result = runBlocking { plugin.cancelTempBasal(false) }
+        val result = runBlocking {
+            whenever(pumpSync.expectedPumpState()).thenReturn(
+                PumpSync.PumpState(temporaryBasal = null, extendedBolus = null, bolus = null, profile = null, serialNumber = "")
+            )
+            plugin.cancelTempBasal(false)
+        }
 
         assertThat(result.success).isTrue()
         assertThat(result.enacted).isFalse()

@@ -105,7 +105,7 @@ internal class O5OmnipodWizardViewModelTest {
         whenever(podStateManager.alarmType).thenReturn(null)
         assertThat(sut.isPodInAlarm()).isFalse()
 
-        whenever(podStateManager.alarmType).thenReturn(AlarmType.LOW_RESERVOIR_ALERT)
+        whenever(podStateManager.alarmType).thenReturn(AlarmType.ALARM_EMPTY_RESERVOIR)
         assertThat(sut.isPodInAlarm()).isTrue()
     }
 
