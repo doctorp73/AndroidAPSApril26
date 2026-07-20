@@ -16,12 +16,15 @@ import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.DeliveryStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
 import app.aaps.pump.omnipod.common.queue.command.CommandDeactivatePod
+import app.aaps.pump.omnipod.common.queue.command.CommandDeliverBasalCorrection
+import app.aaps.pump.omnipod.common.queue.command.CommandDisableSuspendAlerts
 import app.aaps.pump.omnipod.common.queue.command.CommandHandleTimeChange
 import app.aaps.pump.omnipod.common.queue.command.CommandPairNewPod
 import app.aaps.pump.omnipod.common.queue.command.CommandPlayTestBeep
 import app.aaps.pump.omnipod.common.queue.command.CommandResumeDelivery
 import app.aaps.pump.omnipod.common.queue.command.CommandSilenceAlerts
 import app.aaps.pump.omnipod.common.queue.command.CommandSuspendDelivery
+import app.aaps.pump.omnipod.common.queue.command.CommandUpdateAlertConfiguration
 import app.aaps.shared.tests.TestBaseWithProfile
 import com.google.common.truth.Truth.assertThat
 import io.reactivex.rxjava3.core.Observable
@@ -62,7 +65,7 @@ class O5PumpPluginTest : TestBaseWithProfile() {
     fun setup() {
         plugin = O5PumpPlugin(
             aapsLogger, rh, preferences, commandQueue, bleManager, podStateManager, pumpSync,
-            notificationManager, pumpEnactResultProvider, bolusProgressData, protectionCheck, blePreCheck
+            notificationManager, pumpEnactResultProvider, bolusProgressData, protectionCheck, blePreCheck, config
         )
         // TestBaseWithProfile's rh mock only stubs a handful of generic strings (ok/error/
         // mgdl/mmol) - these are the ones O5PumpPlugin itself uses for PumpEnactResult
@@ -364,5 +367,94 @@ class O5PumpPluginTest : TestBaseWithProfile() {
         whenever(podStateManager.deliverySuspended).thenReturn(true)
 
         assertThat(plugin.isThisProfileSet(mock())).isFalse()
+    }
+
+    // -- alert config sync / suspend-alert silencing / basal-drift correction --------------
+    // (the 3 previously-dead command classes wired this session)
+
+    @Test
+    fun `executeCustomCommand rejects CommandUpdateAlertConfiguration when settings already match`() {
+        whenever(podStateManager.activationProgress).thenReturn(ActivationProgress.COMPLETED)
+        // Every OmnipodBooleanPreferenceKey/OmnipodIntPreferenceKey read below is unstubbed on
+        // the mock preferences, i.e. Mockito's false/0 defaults - matching this exactly proves
+        // the comparison is real, not incidentally always-different.
+        whenever(podStateManager.syncedAlertSettings).thenReturn(
+            O5PodStateManager.SyncedAlertSettings(
+                expirationReminderEnabled = false, expirationReminderHours = 0,
+                expirationAlarmEnabled = false, expirationAlarmHours = 0,
+                lowReservoirAlertEnabled = false, lowReservoirAlertUnits = 0
+            )
+        )
+
+        val result = plugin.executeCustomCommand(CommandUpdateAlertConfiguration())
+
+        assertThat(result!!.success).isTrue()
+        assertThat(result.enacted).isFalse()
+        verify(bleManager, never()).sendCommand(any(), any())
+    }
+
+    @Test
+    fun `executeCustomCommand rejects CommandUpdateAlertConfiguration before activation completes`() {
+        whenever(podStateManager.activationProgress).thenReturn(ActivationProgress.PRIME_COMPLETED)
+
+        val result = plugin.executeCustomCommand(CommandUpdateAlertConfiguration())
+
+        assertThat(result!!.success).isTrue()
+        assertThat(result.enacted).isFalse()
+        verify(bleManager, never()).sendCommand(any(), any())
+    }
+
+    @Test
+    fun `executeCustomCommand pushes CommandUpdateAlertConfiguration when settings changed and records the sync`() {
+        whenever(podStateManager.activationProgress).thenReturn(ActivationProgress.COMPLETED)
+        whenever(podStateManager.syncedAlertSettings).thenReturn(null) // never synced
+        whenever(podStateManager.podId).thenReturn(12345L)
+        whenever(podStateManager.podLifeInHours).thenReturn(80.toShort())
+        whenever(podStateManager.minutesSinceActivation).thenReturn(60.toShort())
+        whenever(podStateManager.lastStatusResponseReceived).thenReturn(System.currentTimeMillis())
+        whenever(bleManager.sendCommand(any(), any())).thenReturn(Observable.empty())
+
+        val result = plugin.executeCustomCommand(CommandUpdateAlertConfiguration())
+
+        assertThat(result!!.success).isTrue()
+        assertThat(result.enacted).isTrue()
+        verify(bleManager).sendCommand(any(), any())
+        verify(podStateManager).syncedAlertSettings = any()
+    }
+
+    @Test
+    fun `executeCustomCommand rejects CommandDisableSuspendAlerts when nothing is armed`() {
+        whenever(podStateManager.suspendAlertsEnabled).thenReturn(false)
+
+        val result = plugin.executeCustomCommand(CommandDisableSuspendAlerts(rh))
+
+        assertThat(result!!.success).isTrue()
+        assertThat(result.enacted).isFalse()
+        verify(bleManager, never()).sendCommand(any(), any())
+    }
+
+    @Test
+    fun `executeCustomCommand silences the pod for CommandDisableSuspendAlerts when armed`() {
+        whenever(podStateManager.suspendAlertsEnabled).thenReturn(true)
+        whenever(podStateManager.podId).thenReturn(12345L)
+        whenever(bleManager.sendCommand(any(), any())).thenReturn(Observable.empty())
+
+        val result = plugin.executeCustomCommand(CommandDisableSuspendAlerts(rh))
+
+        assertThat(result!!.success).isTrue()
+        assertThat(result.enacted).isTrue()
+        verify(bleManager).sendCommand(any(), any())
+        verify(podStateManager).suspendAlertsEnabled = false
+    }
+
+    @Test
+    fun `executeCustomCommand rejects CommandDeliverBasalCorrection when drift compensation is disabled - the default`() {
+        // config.isEnabled(ENABLE_OMNIPOD_DRIFT_COMPENSATION) is unstubbed - Mockito's false
+        // default - proving this experimental feature stays off unless explicitly enabled.
+        val result = plugin.executeCustomCommand(CommandDeliverBasalCorrection())
+
+        assertThat(result!!.success).isTrue()
+        assertThat(result.enacted).isFalse()
+        verify(bleManager, never()).sendCommand(any(), any())
     }
 }

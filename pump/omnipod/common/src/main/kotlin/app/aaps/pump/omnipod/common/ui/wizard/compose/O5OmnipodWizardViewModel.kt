@@ -47,7 +47,7 @@ import app.aaps.pump.omnipod.common.bledriver.pod.response.ResponseType
 import app.aaps.pump.omnipod.common.bledriver.pod.response.SetUniqueIdResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.VersionResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
-import app.aaps.pump.omnipod.common.bledriver.pod.state.expiry
+import app.aaps.pump.omnipod.common.bledriver.pod.util.buildO5ExpirationAlerts
 import app.aaps.pump.omnipod.common.keys.OmnipodBooleanPreferenceKey
 import app.aaps.pump.omnipod.common.keys.OmnipodIntPreferenceKey
 import app.aaps.pump.omnipod.common.queue.command.CommandDeactivatePod
@@ -58,10 +58,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.rx3.rxSingle
-import java.time.Duration
-import java.time.ZonedDateTime
 import java.util.Date
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Provider
 import app.aaps.pump.omnipod.common.R as CommonR
@@ -303,7 +300,7 @@ class O5OmnipodWizardViewModel @Inject constructor(
                     .setSequenceNumber(nextSeq())
                     .setNonce(O5_FIXED_NONCE)
                     .setMultiCommandFlag(true)
-                    .setAlertConfigurations(buildExpirationAlerts())
+                    .setAlertConfigurations(buildO5ExpirationAlerts(podStateManager, preferences, logger))
                     .build()
                 bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
                 podStateManager.activationProgress = ActivationProgress.UPDATED_EXPIRATION_ALERTS
@@ -357,6 +354,11 @@ class O5OmnipodWizardViewModel @Inject constructor(
             )
             notificationManager.dismiss(NotificationId.OMNIPOD_POD_NOT_ATTACHED)
             podStateManager.activationProgress = ActivationProgress.COMPLETED
+            // Baseline for basal-drift tracking (see O5PodStateManager.cumulativeBolusPulsesDelivered's
+            // doc comment) - excludes the priming/cannula-insertion bolus pulses already delivered
+            // during activation from the "basal" bucket by starting the bolus counter at the pod's
+            // current total, so basalPulsesDelivered reads 0 the instant normal dosing begins.
+            podStateManager.cumulativeBolusPulsesDelivered = podStateManager.totalPulsesDelivered ?: 0
             // Read status right away so the reservoir StateFlow leaves its 0.0 init immediately (same rationale
             // as Dash's identical fire-and-forget readStatus() call after activation completes).
             viewModelScope.launch { commandQueue.readStatus(rh.gs(CommonR.string.omnipod_common_pod_activation_wizard_pod_activated_title)) }
@@ -365,73 +367,6 @@ class O5OmnipodWizardViewModel @Inject constructor(
             logger.error(LTag.PUMP, "Error in O5 Pod activation part 2", throwable)
             pumpEnactResultProvider.get().success(false).comment(throwable.message ?: throwable.javaClass.simpleName)
         }
-    }
-
-    /** Mirrors [app.aaps.pump.omnipod.dash.driver.OmnipodDashManagerImpl
-     *  .createActivationPart2Observables]'s expiration-alert delay math exactly, using
-     *  O5's own [expiry] extension in place of Dash's pod-state-manager property. */
-    private fun buildExpirationAlerts(): List<AlertConfiguration> {
-        val userConfiguredExpirationReminderHours =
-            preferences.get(OmnipodBooleanPreferenceKey.ExpirationReminder).let { enabled ->
-                if (enabled) preferences.get(OmnipodIntPreferenceKey.ExpirationReminderHours).toLong() else null
-            }
-        val userConfiguredExpirationAlarmHours =
-            preferences.get(OmnipodBooleanPreferenceKey.ExpirationAlarm).let { enabled ->
-                if (enabled) preferences.get(OmnipodIntPreferenceKey.ExpirationAlarmHours).toLong() else null
-            }
-
-        val podLifeLeft = Duration.between(ZonedDateTime.now(), requireNotNull(podStateManager.expiry) { "Missing pod expiry" })
-
-        val expirationAlarmEnabled = userConfiguredExpirationAlarmHours != null && userConfiguredExpirationAlarmHours > 0
-        val expirationAlarmDelay = podLifeLeft.minus(
-            Duration.ofHours(userConfiguredExpirationAlarmHours ?: PodConstants.POD_EXPIRATION_ALERT_HOURS_REMAINING_DEFAULT)
-        ).plus(Duration.ofHours(8)) // grace period, matching Dash
-
-        val expirationImminentDelay = podLifeLeft.minus(
-            Duration.ofHours(PodConstants.POD_EXPIRATION_IMMINENT_ALERT_HOURS_REMAINING)
-        ).plus(Duration.ofHours(8))
-
-        val alerts = mutableListOf(
-            AlertConfiguration(
-                AlertType.EXPIRATION,
-                enabled = expirationAlarmEnabled,
-                durationInMinutes = (TimeUnit.HOURS.toMinutes(userConfiguredExpirationAlarmHours ?: PodConstants.POD_EXPIRATION_ALERT_HOURS_REMAINING_DEFAULT) - 60).toShort(),
-                autoOff = false,
-                AlertTrigger.TimerTrigger(expirationAlarmDelay.toMinutes().toShort()),
-                BeepType.FOUR_TIMES_BIP_BEEP,
-                BeepRepetitionType.XXX3
-            ),
-            AlertConfiguration(
-                AlertType.EXPIRATION_IMMINENT,
-                enabled = expirationAlarmEnabled,
-                durationInMinutes = 0,
-                autoOff = false,
-                AlertTrigger.TimerTrigger(expirationImminentDelay.toMinutes().toShort()),
-                BeepType.FOUR_TIMES_BIP_BEEP,
-                BeepRepetitionType.XXX4
-            )
-        )
-
-        val userExpiryReminderEnabled = userConfiguredExpirationReminderHours != null && userConfiguredExpirationReminderHours > 0
-        val userExpiryReminderDelay = podLifeLeft.minus(
-            Duration.ofHours(userConfiguredExpirationReminderHours ?: (PodConstants.MAX_POD_LIFETIME.toHours() + 1))
-        )
-        if (!userExpiryReminderDelay.isNegative) {
-            alerts.add(
-                AlertConfiguration(
-                    AlertType.USER_SET_EXPIRATION,
-                    enabled = userExpiryReminderEnabled,
-                    durationInMinutes = 0,
-                    autoOff = false,
-                    AlertTrigger.TimerTrigger(userExpiryReminderDelay.toMinutes().toShort()),
-                    BeepType.FOUR_TIMES_BIP_BEEP,
-                    BeepRepetitionType.EVERY_MINUTE_AND_EVERY_15_MIN
-                )
-            )
-        } else {
-            logger.warn(LTag.PUMPBTCOMM, "buildExpirationAlerts negative expiryAlertDuration=$userExpiryReminderDelay")
-        }
-        return alerts
     }
 
     override fun doDeactivatePod(): Single<PumpEnactResult> = rxSingle {

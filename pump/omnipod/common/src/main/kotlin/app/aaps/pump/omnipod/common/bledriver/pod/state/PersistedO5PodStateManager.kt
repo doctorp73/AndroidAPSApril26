@@ -242,6 +242,48 @@ class PersistedO5PodStateManager @Inject constructor(
     override val podActivatedAt: Long? get() = podState.podActivatedAt
     override val triggeredAlertTimes: Map<AlertType, Short>? get() = podState.triggeredAlertTimes
 
+    override var suspendAlertsEnabled: Boolean
+        get() = podState.suspendAlertsEnabled
+        set(value) {
+            podState.suspendAlertsEnabled = value
+            store()
+        }
+
+    override var syncedAlertSettings: O5PodStateManager.SyncedAlertSettings?
+        get() = podState.syncedAlertSettings
+        set(value) {
+            podState.syncedAlertSettings = value
+            store()
+        }
+
+    override var basalExpected: Double?
+        get() = podState.basalExpected
+        set(value) {
+            podState.basalExpected = value
+            store()
+        }
+
+    override var lastBasalCorrectionTime: Long?
+        get() = podState.lastBasalCorrectionTime
+        set(value) {
+            podState.lastBasalCorrectionTime = value
+            store()
+        }
+
+    override var basalCorrectionInProgress: Boolean
+        get() = podState.basalCorrectionInProgress
+        set(value) {
+            podState.basalCorrectionInProgress = value
+            store()
+        }
+
+    override var cumulativeBolusPulsesDelivered: Short?
+        get() = podState.cumulativeBolusPulsesDelivered
+        set(value) {
+            podState.cumulativeBolusPulsesDelivered = value
+            store()
+        }
+
     override fun increaseEapAkaSequenceNumber(): ByteArray {
         pendingEapAkaSequenceNumber = eapAkaSequenceNumber + 1
         return EapSqn(pendingEapAkaSequenceNumber).value
@@ -275,15 +317,18 @@ class PersistedO5PodStateManager @Inject constructor(
     }
 
     override fun updateFromDefaultStatusResponse(response: DefaultStatusResponse) {
+        val previousUpdate = podState.lastStatusResponseReceived
+        val now = System.currentTimeMillis()
+        podState.totalPulsesDelivered = response.totalPulsesDelivered
+        podState.basalExpected = nextBasalExpected(previousUpdate, now)
         podState.podStatus = response.podStatus
         podState.deliveryStatus = response.deliveryStatus
-        podState.totalPulsesDelivered = response.totalPulsesDelivered
         podState.bolusPulsesRemaining = response.bolusPulsesRemaining
         podState.reservoirPulsesRemaining = response.reservoirPulsesRemaining
         podState.activeAlerts = response.activeAlerts
         podState.minutesSinceActivation = response.minutesSinceActivation
         podState.sequenceNumberOfLastProgrammingCommand = response.sequenceNumberOfLastProgrammingCommand
-        podState.lastStatusResponseReceived = System.currentTimeMillis()
+        podState.lastStatusResponseReceived = now
         store()
     }
 
@@ -411,6 +456,12 @@ class PersistedO5PodStateManager @Inject constructor(
         var podStatusWhenAlarmOccurred: PodStatus? = null,
         var rssi: Short? = null,
         var podActivatedAt: Long? = null,
-        var triggeredAlertTimes: Map<AlertType, Short>? = null
+        var triggeredAlertTimes: Map<AlertType, Short>? = null,
+        var suspendAlertsEnabled: Boolean = true,
+        var syncedAlertSettings: O5PodStateManager.SyncedAlertSettings? = null,
+        var basalExpected: Double? = null,
+        var lastBasalCorrectionTime: Long? = null,
+        var basalCorrectionInProgress: Boolean = false,
+        var cumulativeBolusPulsesDelivered: Short? = null
     ) : Serializable
 }

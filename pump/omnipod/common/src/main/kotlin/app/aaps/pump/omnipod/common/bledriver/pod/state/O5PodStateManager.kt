@@ -129,7 +129,12 @@ interface O5PodStateManager {
          *  [app.aaps.core.interfaces.pump.PumpSync.syncBolusWithPumpId] if the original
          *  call never reached its own sync step. */
         val bolusType: BS.Type? = null,
-        val startedAt: Long
+        val startedAt: Long,
+        /** True only for the micro-bolus [app.aaps.pump.omnipod.common.O5PumpPlugin
+         *  .deliverBasalCorrection] issues - excluded from [cumulativeBolusPulsesDelivered]
+         *  tracking so it counts toward delivered *basal* insulin, not bolus insulin
+         *  (the whole point of the correction is to true up basal drift). */
+        val isBasalCorrection: Boolean = false
     ) : Serializable
 
     // -- read-only pod status, populated from VersionResponse / DefaultStatusResponse ----
@@ -178,6 +183,54 @@ interface O5PodStateManager {
      *  (value 0 = never triggered, per OmnipodKit's own convention, so those are
      *  filtered out here). Null until page 1 has been fetched at least once. */
     val triggeredAlertTimes: Map<AlertType, Short>?
+
+    // -- alert config sync, mirrors OmnipodDashPodStateManager's suspendAlertsEnabled/
+    // sameAlertSettings --------------------------------------------------------------------
+
+    /** True while the pod's SUSPEND_ENDED alert is still armed from a prior suspend -
+     *  set by [app.aaps.pump.omnipod.common.O5PumpPlugin]'s suspendDelivery(), cleared by
+     *  its disableSuspendAlerts() once delivery resumes (silences the nuisance beep for a
+     *  suspend/resume the user/algorithm caused intentionally). */
+    var suspendAlertsEnabled: Boolean
+
+    data class SyncedAlertSettings(
+        val expirationReminderEnabled: Boolean,
+        val expirationReminderHours: Int,
+        val expirationAlarmEnabled: Boolean,
+        val expirationAlarmHours: Int,
+        val lowReservoirAlertEnabled: Boolean,
+        val lowReservoirAlertUnits: Int
+    ) : Serializable
+
+    /** The alert preference values last successfully pushed to the pod - null until
+     *  [app.aaps.pump.omnipod.common.O5PumpPlugin]'s updateAlertConfiguration() first
+     *  succeeds. Compared against current preferences to skip redundant re-syncs. */
+    var syncedAlertSettings: SyncedAlertSettings?
+
+    // -- basal drift correction, mirrors OmnipodDashPodStateManager's basalExpected/
+    // bolusPulsesDelivered/lastBasalCorrectionTime/basalCorrectionInProgress --------------
+
+    /** Integrated expected basal delivery (units) since [O5PodStateManager] started
+     *  tracking it (right after activation completes) - compared against actual delivered
+     *  basal insulin ([app.aaps.pump.omnipod.common.bledriver.pod.state.basalDelivered])
+     *  to detect drift. Null until the first post-activation status poll. */
+    var basalExpected: Double?
+
+    /** Wall-clock time of the last basal-drift correction bolus - a cooldown to prevent
+     *  rapid repeated corrections. Null if none has ever been delivered. */
+    var lastBasalCorrectionTime: Long?
+
+    /** True while a basal-drift correction bolus is in flight - prevents [deliverTreatment]
+     *  concurrency guards from misreading it as a user-requested bolus. */
+    var basalCorrectionInProgress: Boolean
+
+    /** Cumulative pod pulses attributed to boluses (not basal) since activation completed -
+     *  subtracted from [totalPulsesDelivered] to isolate delivered basal insulin. Excludes
+     *  basal-correction boluses themselves (see [PendingDoseCommand.isBasalCorrection]).
+     *  Initialized to [totalPulsesDelivered] at the moment activation completes (see
+     *  [app.aaps.pump.omnipod.common.ui.wizard.compose.O5OmnipodWizardViewModel]), so
+     *  priming/cannula-insertion pulses are excluded from the basal bucket too. */
+    var cumulativeBolusPulsesDelivered: Short?
 
     fun updateFromVersionResponse(response: VersionResponse)
     fun updateFromDefaultStatusResponse(response: DefaultStatusResponse)
@@ -300,6 +353,13 @@ class InMemoryO5PodStateManager : O5PodStateManager {
     @Volatile override var triggeredAlertTimes: Map<AlertType, Short>? = null
         private set
 
+    @Volatile override var suspendAlertsEnabled: Boolean = true
+    @Volatile override var syncedAlertSettings: O5PodStateManager.SyncedAlertSettings? = null
+    @Volatile override var basalExpected: Double? = null
+    @Volatile override var lastBasalCorrectionTime: Long? = null
+    @Volatile override var basalCorrectionInProgress: Boolean = false
+    @Volatile override var cumulativeBolusPulsesDelivered: Short? = null
+
     override fun increaseEapAkaSequenceNumber(): ByteArray {
         pendingEapAkaSequenceNumber = eapAkaSequenceNumber + 1
         return EapSqn(pendingEapAkaSequenceNumber).value
@@ -326,15 +386,18 @@ class InMemoryO5PodStateManager : O5PodStateManager {
     }
 
     override fun updateFromDefaultStatusResponse(response: DefaultStatusResponse) {
+        val previousUpdate = lastStatusResponseReceived
+        val now = System.currentTimeMillis()
+        totalPulsesDelivered = response.totalPulsesDelivered
+        basalExpected = nextBasalExpected(previousUpdate, now)
         podStatus = response.podStatus
         deliveryStatus = response.deliveryStatus
-        totalPulsesDelivered = response.totalPulsesDelivered
         bolusPulsesRemaining = response.bolusPulsesRemaining
         reservoirPulsesRemaining = response.reservoirPulsesRemaining
         activeAlerts = response.activeAlerts
         minutesSinceActivation = response.minutesSinceActivation
         sequenceNumberOfLastProgrammingCommand = response.sequenceNumberOfLastProgrammingCommand
-        lastStatusResponseReceived = System.currentTimeMillis()
+        lastStatusResponseReceived = now
     }
 
     override fun updateFromAlarmStatusResponse(response: AlarmStatusResponse) {
@@ -425,5 +488,11 @@ class InMemoryO5PodStateManager : O5PodStateManager {
         rssi = null
         podActivatedAt = null
         triggeredAlertTimes = null
+        suspendAlertsEnabled = true
+        syncedAlertSettings = null
+        basalExpected = null
+        lastBasalCorrectionTime = null
+        basalCorrectionInProgress = false
+        cumulativeBolusPulsesDelivered = null
     }
 }

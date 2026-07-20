@@ -6,6 +6,8 @@ import app.aaps.core.data.pump.defs.ManufacturerType
 import app.aaps.core.data.pump.defs.PumpDescription
 import app.aaps.core.data.pump.defs.PumpType
 import app.aaps.core.data.time.T
+import app.aaps.core.interfaces.configuration.Config
+import app.aaps.core.interfaces.configuration.ExternalOptions
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.notifications.NotificationId
@@ -31,6 +33,7 @@ import app.aaps.core.ui.compose.icons.IcPluginOmnipod
 import app.aaps.pump.omnipod.common.bledriver.comm.O5BleManager
 import app.aaps.pump.omnipod.common.bledriver.pod.command.DeactivateCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.GetStatusCommand
+import app.aaps.pump.omnipod.common.bledriver.pod.command.ProgramAlertsCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.ProgramBasalCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.ProgramBeepsCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.ProgramBolusCommand
@@ -39,6 +42,10 @@ import app.aaps.pump.omnipod.common.bledriver.pod.command.SilenceAlertsCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.StopDeliveryCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.command.SuspendDeliveryCommand
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.ActivationProgress
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertConfiguration
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertTrigger
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.BeepRepetitionType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.BeepType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.O5_FIXED_NONCE
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodConstants
@@ -48,14 +55,21 @@ import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoActivationTime
 import app.aaps.pump.omnipod.common.bledriver.pod.response.PodInfoTriggeredAlertsResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.ResponseType
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
+import app.aaps.pump.omnipod.common.bledriver.pod.state.basalDrift
+import app.aaps.pump.omnipod.common.bledriver.pod.state.basalDelivered
+import app.aaps.pump.omnipod.common.bledriver.pod.util.buildO5ExpirationAlerts
 import app.aaps.pump.omnipod.common.keys.OmnipodBooleanPreferenceKey
+import app.aaps.pump.omnipod.common.keys.OmnipodIntPreferenceKey
 import app.aaps.pump.omnipod.common.queue.command.CommandDeactivatePod
+import app.aaps.pump.omnipod.common.queue.command.CommandDeliverBasalCorrection
+import app.aaps.pump.omnipod.common.queue.command.CommandDisableSuspendAlerts
 import app.aaps.pump.omnipod.common.queue.command.CommandHandleTimeChange
 import app.aaps.pump.omnipod.common.queue.command.CommandPairNewPod
 import app.aaps.pump.omnipod.common.queue.command.CommandPlayTestBeep
 import app.aaps.pump.omnipod.common.queue.command.CommandResumeDelivery
 import app.aaps.pump.omnipod.common.queue.command.CommandSilenceAlerts
 import app.aaps.pump.omnipod.common.queue.command.CommandSuspendDelivery
+import app.aaps.pump.omnipod.common.queue.command.CommandUpdateAlertConfiguration
 import app.aaps.pump.omnipod.common.ui.compose.OmnipodO5ComposeContent
 import app.aaps.pump.omnipod.common.util.mapProfileToBasalProgram
 import io.reactivex.rxjava3.core.Completable
@@ -105,7 +119,8 @@ class O5PumpPlugin @Inject constructor(
     private val pumpEnactResultProvider: Provider<PumpEnactResult>,
     private val bolusProgressData: BolusProgressData,
     private val protectionCheck: ProtectionCheck,
-    private val blePreCheck: BlePreCheck
+    private val blePreCheck: BlePreCheck,
+    private val config: Config
 ) : PumpPluginBase(
     pluginDescription = PluginDescription()
         .mainType(PluginType.PUMP)
@@ -240,6 +255,11 @@ class O5PumpPlugin @Inject constructor(
         try {
             fetchStatus().blockingAwait()
             reconcilePendingDose()
+            // Self-healing preference sync: cheap no-op when nothing changed (see
+            // updateAlertConfiguration()'s syncedAlertSettings guard), so piggybacking on
+            // every status poll picks up a preference change within one poll cycle without
+            // needing a dedicated Flow-based watcher.
+            updateAlertConfiguration()
         } catch (e: Exception) {
             aapsLogger.error(LTag.PUMP, "Error in O5 getPumpStatus", e)
         }
@@ -307,6 +327,14 @@ class O5PumpPlugin @Inject constructor(
                             pumpType = PumpType.OMNIPOD_5,
                             pumpSerial = serialNumber()
                         )
+                        // Basal-correction boluses count toward delivered *basal* insulin, not
+                        // bolus insulin - see O5PodStateManager.cumulativeBolusPulsesDelivered's
+                        // doc comment for why they're excluded here.
+                        if (!pending.isBasalCorrection) {
+                            val deliveredPulses = Math.round(deliveredUnits / PodConstants.POD_PULSE_BOLUS_UNITS).toShort()
+                            podStateManager.cumulativeBolusPulsesDelivered =
+                                ((podStateManager.cumulativeBolusPulsesDelivered ?: 0) + deliveredPulses).toShort()
+                        }
                     }
                     podStateManager.lastBolusDeliveredUnits = deliveredUnits
                     podStateManager.pendingDoseCommand = null
@@ -372,6 +400,7 @@ class O5PumpPlugin @Inject constructor(
             podStateManager.deliverySuspended = false
             podStateManager.pendingDoseCommand = null
             notificationManager.post(NotificationId.PROFILE_SET_OK, app.aaps.core.ui.R.string.profile_set_ok)
+            disableSuspendAlerts()
             pumpEnactResultProvider.get().success(true).enacted(true)
         } catch (e: Exception) {
             aapsLogger.error(LTag.PUMP, "Error in O5 setNewBasalProfile", e)
@@ -605,6 +634,7 @@ class O5PumpPlugin @Inject constructor(
             podStateManager.activeTempBasalRate = absoluteRate
             podStateManager.activeTempBasalDurationMinutes = durationInMinutes.toShort()
             podStateManager.pendingDoseCommand = null
+            if (needsBasalCorrection()) deliverBasalCorrection()
             pumpEnactResultProvider.get().success(true).enacted(true).isPercent(false).absolute(absoluteRate).duration(durationInMinutes)
         } catch (e: Exception) {
             aapsLogger.error(LTag.PUMP, "Error in O5 setTempBasalAbsolute", e)
@@ -646,6 +676,7 @@ class O5PumpPlugin @Inject constructor(
         podStateManager.activeTempBasalRate = null
         podStateManager.activeTempBasalDurationMinutes = null
         podStateManager.pendingDoseCommand = null
+        if (needsBasalCorrection()) deliverBasalCorrection()
     }
 
     override suspend fun setExtendedBolus(insulin: Double, durationInMinutes: Int): PumpEnactResult =
@@ -681,6 +712,9 @@ class O5PumpPlugin @Inject constructor(
             is CommandSuspendDelivery -> suspendDelivery()
             is CommandPlayTestBeep    -> playTestBeep()
             is CommandHandleTimeChange -> runBlocking { resumeOrHandleTimeChange() }
+            is CommandUpdateAlertConfiguration -> updateAlertConfiguration()
+            is CommandDisableSuspendAlerts     -> disableSuspendAlerts()
+            is CommandDeliverBasalCorrection   -> deliverBasalCorrection()
             else                      -> {
                 aapsLogger.warn(LTag.PUMP, "Unsupported custom command: " + customCommand.javaClass.name)
                 pumpEnactResultProvider.get().success(false).enacted(false).comment(
@@ -741,6 +775,9 @@ class O5PumpPlugin @Inject constructor(
                 .build()
             bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
             podStateManager.deliverySuspended = true
+            // Suspending delivery arms the pod's own SUSPEND_ENDED alert (fires once delivery
+            // resumes) - track that so disableSuspendAlerts() knows there's something to silence.
+            podStateManager.suspendAlertsEnabled = true
             pumpEnactResultProvider.get().success(true).enacted(true)
         } catch (e: Exception) {
             aapsLogger.error(LTag.PUMP, "Error suspending O5 delivery", e)
@@ -775,6 +812,199 @@ class O5PumpPlugin @Inject constructor(
     private fun notifyUncertain(id: NotificationId, message: String) {
         if (podStateManager.pendingDoseCommand != null) {
             notificationManager.post(id, message, soundRes = app.aaps.core.ui.R.raw.boluserror)
+        }
+    }
+
+    // -- alert config sync -----------------------------------------------------------------
+
+    /** Re-pushes expiration/low-reservoir alert config to the pod when preferences have
+     *  changed since the last successful push - safe to call often (see [getPumpStatus]'s
+     *  call site), since it's a no-op whenever nothing has changed. Mirrors Dash's
+     *  updateAlertConfiguration(), minus its isPodRunning/expiry-negative guards (O5's
+     *  activationProgress check below covers the same intent). */
+    private fun updateAlertConfiguration(): PumpEnactResult {
+        val expirationReminderEnabled = preferences.get(OmnipodBooleanPreferenceKey.ExpirationReminder)
+        val expirationReminderHours = preferences.get(OmnipodIntPreferenceKey.ExpirationReminderHours)
+        val expirationAlarmEnabled = preferences.get(OmnipodBooleanPreferenceKey.ExpirationAlarm)
+        val expirationAlarmHours = preferences.get(OmnipodIntPreferenceKey.ExpirationAlarmHours)
+        val lowReservoirAlertEnabled = preferences.get(OmnipodBooleanPreferenceKey.LowReservoirAlert)
+        val lowReservoirAlertUnits = preferences.get(OmnipodIntPreferenceKey.LowReservoirAlertUnits)
+        val current = O5PodStateManager.SyncedAlertSettings(
+            expirationReminderEnabled, expirationReminderHours,
+            expirationAlarmEnabled, expirationAlarmHours,
+            lowReservoirAlertEnabled, lowReservoirAlertUnits
+        )
+
+        if (podStateManager.syncedAlertSettings == current) {
+            return pumpEnactResultProvider.get().success(true).enacted(false)
+        }
+        if (podStateManager.activationProgress != ActivationProgress.COMPLETED) {
+            // Nothing paired/running to push to yet - the wizard programs the initial
+            // config itself during activation (see buildO5ExpirationAlerts's call site).
+            return pumpEnactResultProvider.get().success(true).enacted(false)
+        }
+
+        return try {
+            val alerts = buildO5ExpirationAlerts(podStateManager, preferences, aapsLogger) + AlertConfiguration(
+                AlertType.LOW_RESERVOIR,
+                enabled = lowReservoirAlertEnabled,
+                durationInMinutes = 0,
+                autoOff = false,
+                AlertTrigger.ReservoirVolumeTrigger((lowReservoirAlertUnits * 10).toShort()),
+                BeepType.FOUR_TIMES_BIP_BEEP,
+                BeepRepetitionType.XXX
+            )
+            val cmd = ProgramAlertsCommand.Builder()
+                .setUniqueId(requirePodId())
+                .setSequenceNumber(podStateManager.msgSequenceNumber.toShort())
+                .setNonce(FIXED_NONCE)
+                .setAlertConfigurations(alerts)
+                .build()
+            bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
+            podStateManager.syncedAlertSettings = current
+            pumpEnactResultProvider.get().success(true).enacted(true)
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.PUMP, "Error updating O5 alert configuration", e)
+            pumpEnactResultProvider.get().success(false).enacted(false)
+        }
+    }
+
+    /** Silences the pod's SUSPEND_ENDED alert once delivery has resumed - see
+     *  [podStateManager]'s suspendAlertsEnabled doc comment. */
+    private fun disableSuspendAlerts(): PumpEnactResult {
+        if (!podStateManager.suspendAlertsEnabled) {
+            return pumpEnactResultProvider.get().success(true).enacted(false)
+        }
+        return try {
+            val cmd = ProgramAlertsCommand.Builder()
+                .setUniqueId(requirePodId())
+                .setSequenceNumber(podStateManager.msgSequenceNumber.toShort())
+                .setNonce(FIXED_NONCE)
+                .setAlertConfigurations(
+                    listOf(
+                        AlertConfiguration(
+                            AlertType.SUSPEND_ENDED, enabled = false, durationInMinutes = 0, autoOff = false,
+                            AlertTrigger.TimerTrigger(0), BeepType.FOUR_TIMES_BIP_BEEP, BeepRepetitionType.EVERY_MINUTE_AND_EVERY_15_MIN
+                        )
+                    )
+                )
+                .build()
+            bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
+            podStateManager.suspendAlertsEnabled = false
+            pumpEnactResultProvider.get().success(true).enacted(true)
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.PUMP, "Error disabling O5 suspend alerts", e)
+            pumpEnactResultProvider.get().success(false).enacted(false)
+        }
+    }
+
+    // -- basal drift correction --------------------------------------------------------------
+
+    /** Mirrors OmnipodDashPodStateManagerImpl.needsBasalCorrection() exactly (thresholds,
+     *  cooldown, drift-reset/zero-TBR safety checks), adapted to O5's flat temp-basal
+     *  fields in place of Dash's TempBasal object. Opt-in via the same
+     *  [ExternalOptions.ENABLE_OMNIPOD_DRIFT_COMPENSATION] semaphore file Dash uses. */
+    private fun needsBasalCorrection(): Boolean {
+        if (!config.isEnabled(ExternalOptions.ENABLE_OMNIPOD_DRIFT_COMPENSATION)) return false
+
+        val correctionThreshold = -PodConstants.POD_PULSE_BOLUS_UNITS / 2 // -0.025U
+
+        if (podStateManager.activationProgress != ActivationProgress.COMPLETED) return false
+        if (podStateManager.deliverySuspended || podStateManager.alarmType != null) return false
+
+        podStateManager.lastBasalCorrectionTime?.let {
+            if (System.currentTimeMillis() - it < 2 * 60 * 1000L) return false
+        }
+
+        val drift = podStateManager.basalDrift
+
+        // Reset if drift exceeds boundaries (over-delivery or severe under-delivery). Thresholds
+        // are intentionally tight: a reset is preferred over risking over-correction.
+        if (drift >= PodConstants.POD_PULSE_BOLUS_UNITS * 2 || drift <= -PodConstants.POD_PULSE_BOLUS_UNITS * 2) {
+            aapsLogger.warn(LTag.PUMP, "Resetting O5 basal drift: drift=${"%.3f".format(drift)}U")
+            podStateManager.basalExpected = podStateManager.basalDelivered
+            return false
+        }
+
+        if (drift > correctionThreshold) return false
+
+        // Safety check: don't correct when TBR = 0 (algorithm explicitly requested zero insulin),
+        // except a zero temp due to recent bolus delivery, where corrections are still allowed.
+        if (podStateManager.activeTempBasalRate == 0.0) {
+            val timeSinceLastBolus = podStateManager.lastBolusStartTime?.let { System.currentTimeMillis() - it }
+            if (timeSinceLastBolus == null || timeSinceLastBolus >= 5 * 60 * 1000L) return false
+        }
+
+        return true
+    }
+
+    /** Delivers a single POD_PULSE_BOLUS_UNITS (0.05U) correction bolus to true up basal
+     *  drift - see [needsBasalCorrection]. Reuses [waitForBolusDeliveryToComplete] for the
+     *  same progress-polling/confirmation logic a regular bolus uses. */
+    private fun deliverBasalCorrection(): PumpEnactResult {
+        if (!needsBasalCorrection()) {
+            aapsLogger.info(LTag.PUMP, "O5 basal correction no longer appropriate")
+            return pumpEnactResultProvider.get().success(true).enacted(false)
+        }
+        podStateManager.lastBasalCorrectionTime = System.currentTimeMillis()
+
+        val requestedInsulinAmount = PodConstants.POD_PULSE_BOLUS_UNITS
+        syncPumpFlows()
+        if (requestedInsulinAmount > reservoirLevel.value.cU) {
+            aapsLogger.info(LTag.PUMP, "O5 basal correction skipped: not enough insulin in reservoir")
+            return pumpEnactResultProvider.get().success(false).enacted(false)
+        }
+        if (podStateManager.deliveryStatus?.bolusDeliveringActive() == true) {
+            aapsLogger.info(LTag.PUMP, "O5 basal correction skipped: bolus already in progress")
+            return pumpEnactResultProvider.get().success(false).enacted(false)
+        }
+
+        return try {
+            bolusDeliveryInProgress = true
+            podStateManager.basalCorrectionInProgress = true
+            aapsLogger.info(LTag.PUMP, "Delivering O5 basal correction")
+
+            val startedAt = System.currentTimeMillis()
+            podStateManager.pendingDoseCommand = O5PodStateManager.PendingDoseCommand(
+                type = O5PodStateManager.PendingDoseType.BOLUS,
+                requestedUnits = requestedInsulinAmount,
+                bolusType = BS.Type.NORMAL,
+                startedAt = startedAt,
+                isBasalCorrection = true
+            )
+            podStateManager.lastBolusStartTime = startedAt
+            podStateManager.lastBolusRequestedUnits = requestedInsulinAmount
+            podStateManager.lastBolusDeliveredUnits = null
+
+            val cmd = ProgramBolusCommand.Builder()
+                .setUniqueId(requirePodId())
+                .setSequenceNumber(podStateManager.msgSequenceNumber.toShort())
+                .setNonce(FIXED_NONCE)
+                .setNumberOfUnits(requestedInsulinAmount)
+                .setDelayBetweenPulsesInEighthSeconds(BOLUS_DELAY_BETWEEN_PULSES_EIGHTH_SECONDS)
+                .setProgramReminder(ProgramReminder(atStart = false, atEnd = false, atInterval = 0))
+                .setO5BolusInfo(mealUnits = 0.0, correctionUnits = requestedInsulinAmount)
+                .build()
+            bleManager.sendCommand(cmd, DefaultStatusResponse::class).ignoreElements().blockingAwait()
+            runBlocking {
+                pumpSync.syncBolusWithPumpId(
+                    timestamp = startedAt,
+                    amount = PumpInsulin(requestedInsulinAmount),
+                    type = BS.Type.NORMAL,
+                    pumpId = startedAt,
+                    pumpType = PumpType.OMNIPOD_5,
+                    pumpSerial = serialNumber()
+                )
+            }
+            val deliveredUnits = waitForBolusDeliveryToComplete(requestedInsulinAmount).blockingGet()
+            aapsLogger.info(LTag.PUMP, "O5 basal correction delivered: $deliveredUnits U")
+            pumpEnactResultProvider.get().success(true).enacted(true).bolusDelivered(deliveredUnits)
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.PUMP, "O5 basal correction delivery failed", e)
+            pumpEnactResultProvider.get().success(false).enacted(false)
+        } finally {
+            bolusDeliveryInProgress = false
+            podStateManager.basalCorrectionInProgress = false
         }
     }
 
