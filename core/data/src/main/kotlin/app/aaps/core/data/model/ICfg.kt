@@ -115,7 +115,8 @@ data class ICfg(
     companion object {
         // Math-validity floors for iobCalcForTreatment. They only engage for corrupt/degenerate iCfg
         // and are no-ops for real configs; they are NOT the medical HardLimits.
-        private const val MIN_DIA_MINUTES = 300.0 // 5 h (mirrors HardLimits.MIN_DIA); floors corrupt/sentinel DIA <= 0
+        private const val MIN_DIA_MINUTES = 30.0 // 0.5 h math-validity floor; only sanitizes degenerate DIA <= 0, preserves legitimate short inhaled DIA (e.g. Afrezza 1.0-2.0 h)
+        //private const val MIN_DIA_MINUTES = 300.0 // 5 h (mirrors HardLimits.MIN_DIA); floors corrupt/sentinel DIA <= 0
         private const val MIN_PEAK_MINUTES = 1.0  // just keeps tp > 0; real peaks (incl. sub-MIN_PEAK like 30 min) pass through
     }
 }

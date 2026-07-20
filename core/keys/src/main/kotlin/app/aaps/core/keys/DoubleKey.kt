@@ -67,15 +67,7 @@ enum class DoubleKey(
     ActionsFillButton2(key = "fill_button2", defaultValue = 0.0, min = 0.0, max = 20.0, titleResId = R.string.pref_title_fill_button_2, defaultedBySM = true, unitType = UnitType.INSULIN),
     ActionsFillButton3(key = "fill_button3", defaultValue = 0.0, min = 0.0, max = 20.0, titleResId = R.string.pref_title_fill_button_3, defaultedBySM = true, unitType = UnitType.INSULIN),
     SafetyMaxBolus(key = "treatmentssafety_maxbolus", defaultValue = 3.0, min = 0.1, max = 60.0, titleResId = R.string.pref_title_max_bolus, unitType = UnitType.INSULIN, sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)),
-    AfrezzaMaxBasalRate(
-        key = "afrezza_max_basal_rate",
-        defaultValue = 2.0,
-        min = 0.1,
-        max = 3.0,
-        titleResId = R.string.pref_title_afrezza_max_basal_rate,
-        summaryResId = R.string.pref_summary_afrezza_max_basal_rate,
-        unitType = UnitType.INSULIN_RATE
-    ),
+
     ApsMaxBasal(
         key = "openapsma_max_basal",
         defaultValue = 1.0,

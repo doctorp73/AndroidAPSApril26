@@ -125,6 +125,7 @@ fun InsulinManagementScreen(
     val hasUnsavedChanges = viewModel.hasUnsavedChanges()
     val isCurrentActive = stored?.insulinLabel == uiState.activeInsulinLabel
     val canDelete = uiState.insulins.size > 1 && !isCurrentActive
+    val isInhaledInsulin = uiState.editorTemplate?.isInhaled == true
 
     // Dialog states
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -390,12 +391,12 @@ fun InsulinManagementScreen(
                                 valueRange = viewModel.peakRange(),
                                 step = 1.0,
                                 unitLabelResId = KeysR.string.units_min,
-                                enabled = editorEnabled,
+                                enabled = editorEnabled && !isInhaledInsulin,
                                 modifier = Modifier.fillMaxWidth()
                             )
 
                             // "Load peak from" preset chips
-                            if (editorEnabled) {
+                            if (editorEnabled && !isInhaledInsulin) {
                                 PeakPresetChips(
                                     presets = viewModel.presetList(),
                                     onPresetClick = { viewModel.loadPeakFromPreset(it) }

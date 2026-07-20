@@ -404,8 +404,6 @@
 
     <!-- DoubleKey: APS preferences -->
     <string name="pref_title_max_basal">Maximum basal rate</string>
-    <string name="pref_title_afrezza_max_basal_rate">Afrezza max basal rate</string>
-    <string name="pref_summary_afrezza_max_basal_rate">Maximum basal rate after an Afrezza dose. Limited by your OpenAPS Max Basal - a higher value has no effect. Range 0.1-3.0 U/h.</string>
     <string name="openapsma_max_basal_summary">This value is called max basal in OpenAPS context</string>
     <string name="pref_title_smb_max_iob">Max IOB for SMB</string>
     <string name="openapssmb_max_iob_summary">This value is called Max IOB in OpenAPS context\nOpenAPS will not add more insulin if current IOB is greater than this value. Value is affected by patient type too.</string>

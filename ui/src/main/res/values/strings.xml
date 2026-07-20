@@ -341,13 +341,6 @@
     <string name="afrezza_logged">%1$dU Afrezza logged</string>
     <string name="afrezza_inhaled">Afrezza inhaled</string>
     <string name="afrezza_not_configured">Add Afrezza insulin in Insulin Management first</string>
-    <string name="afrezza_max_basal_title">Apply Max Basal?</string>
-    <string name="afrezza_max_basal_message">Set temporary basal rate to %1$.1f U/h to counter Afrezza glucose rise?</string>
-    <string name="afrezza_max_basal_duration">Select Duration</string>
-    <string name="afrezza_max_basal_rate">Max basal: %1$.1f U/h</string>
-    <string name="afrezza_max_basal_set">Max basal %1$.1f U/h set for %2$d minutes</string>
-    <string name="afrezza_max_basal_failed">Failed to set max basal</string>
-    <string name="afrezza_max_basal_cancelled">Afrezza max basal cancelled</string>
     <string name="afrezza_carb_prompt_title">Enter Carbs?</string>
     <string name="afrezza_carb_prompt_message">Open the Bolus Calculator to enter carbs for this meal?</string>
     <string name="afrezza_no_profile">No active profile — cannot set temp basal</string>
