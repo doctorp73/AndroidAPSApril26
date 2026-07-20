@@ -27,8 +27,9 @@ import app.aaps.pump.omnipod.common.bledriver.comm.pair.O5RegistrationData
  * ones. No dosing/pairing/connection actions live here - purely credential management, feeding
  * [O5RegistrationData] for whenever actual O5 pairing is attempted elsewhere.
  *
- * Not yet wired into any navigation graph/settings menu - that's a separate, app-specific
- * step (which menu entry, which screen route) outside this component's own scope.
+ * Wired in via [app.aaps.pump.omnipod.common.ui.compose.OmnipodO5ComposeContent] - reached
+ * from the settings gear icon, and auto-routed to from "Activate Pod" when no registration
+ * credentials are installed yet.
  */
 @Composable
 fun O5CredentialImportScreen(
