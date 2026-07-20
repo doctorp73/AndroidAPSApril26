@@ -1,6 +1,7 @@
 package app.aaps.pump.omnipod.common.bledriver.pod.definition
 
 import com.google.common.truth.Truth.assertThat
+import com.google.gson.Gson
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import java.util.Calendar
@@ -103,6 +104,23 @@ class BasalProgramTest {
         assertThat(a).isEqualTo(b)
         assertThat(a.hashCode()).isEqualTo(b.hashCode())
         assertThat(a).isNotEqualTo(different)
+    }
+
+    @Test
+    fun `segments self-heals instead of crashing when Gson deserialization bypasses the constructor`() {
+        // Reproduces a real production crash: Gson deserializes persisted BasalProgram
+        // instances (from OmnipodDashPodStateManagerImpl/PersistedO5PodStateManager's
+        // SharedPreferences blobs) via reflection, which allocates the object and sets
+        // fields directly WITHOUT ever calling this constructor. A BasalProgram whose JSON
+        // doesn't populate mutableSegmentsOrNull - e.g. persisted under an older field
+        // layout - previously came back with that field genuinely null despite the type
+        // system's guarantee, and every subsequent .segments/.rateAt() access threw
+        // Collections.unmodifiableList(null) -> NPE, crashing AAPS's entire loop
+        // calculation cycle (PostCalculationWorker) for anyone with pre-existing pump state.
+        val deserialized = Gson().fromJson("{}", BasalProgram::class.java)
+
+        assertThat(deserialized.segments).isEmpty()
+        assertThat(deserialized.rateAt(millisAt(10, 0))).isEqualTo(0.0)
     }
 
     @Test
