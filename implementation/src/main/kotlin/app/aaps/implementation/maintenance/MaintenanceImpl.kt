@@ -147,15 +147,23 @@ class MaintenanceImpl @Inject constructor(
     }
 
     /**
-     * Eversense writes its own log under EXT_FILES_DIR/eversense (see EversenseLogger.kt's
-     * EXT_FILES_DIR="/sdcard/AndroidAPS/eversense", and loggerUtils.logDirectory already being
-     * "/sdcard/AndroidAPS") - capped independently by amount so Eversense files can't get
-     * crowded out of the AndroidAPS list. Previously joined as "AndroidAPS/eversense", which
-     * doubled the "AndroidAPS" segment and pointed at a directory that never existed, so this
-     * silently found zero files and Eversense.log never made it into any log export.
+     * Eversense writes its own log under EXT_FILES_DIR/AndroidAPS/eversense (see
+     * EversenseLogger.kt's EXT_FILES_DIR="/sdcard/AndroidAPS/eversense"). loggerUtils.logDirectory
+     * is the MAIN app's EXT_FILES_DIR (app/src/main/assets/logback.xml), which is "/sdcard" - NOT
+     * "/sdcard/AndroidAPS" (there's no directory-per-app-log convention here; AndroidAPS.log itself
+     * lives directly in EXT_FILES_DIR). So "AndroidAPS/eversense" joined onto logDirectory is the
+     * correct, real path - capped independently by amount so Eversense files can't get crowded out
+     * of the AndroidAPS list.
+     *
+     * CORRECTION: a previous version of this comment/fix incorrectly assumed logDirectory was
+     * already "/sdcard/AndroidAPS" and changed this join to plain "eversense", which pointed at
+     * "/sdcard/eversense" - wrong, and unverified against the real logback.xml. Reverted. The
+     * original "Eversense.log missing from every export" report is still unexplained by a path
+     * bug here; see EversenseLogger.kt for whether the file is even being created at all under
+     * scoped storage.
      */
     private fun getEversenseLogFiles(amount: Int): List<File> {
-        val eversenseDir = File(loggerUtils.logDirectory, "eversense")
+        val eversenseDir = File(loggerUtils.logDirectory, "AndroidAPS/eversense")
         val files = eversenseDir.listFiles { _: File?, name: String ->
             (name.startsWith("Eversense")
                 && (name.endsWith(".log")

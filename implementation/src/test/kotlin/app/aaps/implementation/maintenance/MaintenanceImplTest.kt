@@ -38,16 +38,16 @@ class MaintenanceImplTest : TestBaseWithProfile() {
             "Eversense.log",
         ).inOrder()
         logs = sut.getLogFiles(10)
-        // 4 AndroidAPS files + 1 Eversense.log (src/test/assets/logger/eversense/) - see the
-        // getEversenseLogFiles regression test below for why that file is included at all.
+        // 4 AndroidAPS files + 1 Eversense.log (src/test/assets/logger/AndroidAPS/eversense/) -
+        // see the getEversenseLogFiles test below for the real on-device path this mirrors.
         assertThat(logs).hasSize(5)
     }
 
-    @Test fun `getLogFiles includes Eversense's own log file from its eversense subdirectory`() {
-        // Regression test: getEversenseLogFiles() previously joined loggerUtils.logDirectory with
-        // "AndroidAPS/eversense" - doubling the "AndroidAPS" segment, since logDirectory is
-        // already "/sdcard/AndroidAPS" - pointing at a directory that never existed, so
-        // Eversense.log silently never made it into any log export.
+    @Test fun `getLogFiles includes Eversense's own log file from its AndroidAPS-eversense subdirectory`() {
+        // getEversenseLogFiles() joins loggerUtils.logDirectory ("/sdcard" on device - see
+        // app/src/main/assets/logback.xml's EXT_FILES_DIR - AndroidAPS.log itself lives directly
+        // there, not under an "AndroidAPS/" subfolder) with "AndroidAPS/eversense", matching
+        // EversenseLogger.kt's own hardcoded "/sdcard/AndroidAPS/eversense/Eversense.log".
         val logs = sut.getLogFiles(10)
 
         assertThat(logs.map { it.name }).contains("Eversense.log")
