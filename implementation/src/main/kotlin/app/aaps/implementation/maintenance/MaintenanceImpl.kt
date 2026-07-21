@@ -147,11 +147,15 @@ class MaintenanceImpl @Inject constructor(
     }
 
     /**
-     * Eversense writes its own log under EXT_FILES_DIR/AndroidAPS/eversense (see EversenseLogger.kt) -
-     * capped independently by amount so Eversense files can't get crowded out of the AndroidAPS list.
+     * Eversense writes its own log under EXT_FILES_DIR/eversense (see EversenseLogger.kt's
+     * EXT_FILES_DIR="/sdcard/AndroidAPS/eversense", and loggerUtils.logDirectory already being
+     * "/sdcard/AndroidAPS") - capped independently by amount so Eversense files can't get
+     * crowded out of the AndroidAPS list. Previously joined as "AndroidAPS/eversense", which
+     * doubled the "AndroidAPS" segment and pointed at a directory that never existed, so this
+     * silently found zero files and Eversense.log never made it into any log export.
      */
     private fun getEversenseLogFiles(amount: Int): List<File> {
-        val eversenseDir = File(loggerUtils.logDirectory, "AndroidAPS/eversense")
+        val eversenseDir = File(loggerUtils.logDirectory, "eversense")
         val files = eversenseDir.listFiles { _: File?, name: String ->
             (name.startsWith("Eversense")
                 && (name.endsWith(".log")
