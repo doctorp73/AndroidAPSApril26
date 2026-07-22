@@ -332,6 +332,18 @@ class InsulinManagementViewModel @Inject constructor(
     }
 
     fun updateEditorPeak(peakMinutes: Int) {
+        // Inhaled insulins (e.g. Afrezza) are only recognised by fromPeak() at their exact
+        // factory-default peak (15 min for Afrezza). Re-deriving the template on every edit would
+        // drop out of the inhaled identity the moment the value moves even 1 minute within its own
+        // valid 10-20 range, silently reverting isInhaled to false and, with it, the inhaled-specific
+        // peak/DIA hard limits and the auto-generated nickname. Once editing an inhaled template,
+        // keep that identity - only non-inhaled templates re-derive from peak (this preserves the
+        // existing "drag peak to switch between Novorapid/Fiasp/Lyumjev" auto-naming behavior).
+        val currentTemplate = uiState.value.editorTemplate
+        if (currentTemplate?.isInhaled == true) {
+            _uiState.update { it.copy(editorPeakMinutes = peakMinutes) }
+            return
+        }
         val editorTemplate = InsulinType.fromPeak(peakMinutes.toLong() * 60_000L)
         _uiState.update {
             it.copy(
