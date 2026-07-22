@@ -70,6 +70,8 @@ class HardLimitsMock @Inject constructor(
     override fun maxDiaInhaled(): Double = HardLimits.MAX_DIA_INHALED[loadAge()]
     override fun minPeak(): Int = MIN_PEAK
     override fun maxPeak(): Int = MAX_PEAK
+    override fun minPeakInhaled(): Int = HardLimits.MIN_PEAK_INHALED
+    override fun maxPeakInhaled(): Int = HardLimits.MAX_PEAK_INHALED
     override fun minIC(): Double = MIN_IC[loadAge()]
     override fun maxIC(): Double = MAX_IC[loadAge()]
 

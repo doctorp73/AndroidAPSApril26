@@ -416,7 +416,9 @@ class InsulinManagementViewModel @Inject constructor(
             showSnackbar(rh.gs(CoreUiR.string.value_out_of_hard_limits, rh.gs(CoreUiR.string.insulin_dia), editedICfg.dia))
             return false
         }
-        if (editedICfg.peak < hardLimits.minPeak() || editedICfg.peak > hardLimits.maxPeak()) {
+        val minPeak = if (isInhaled) hardLimits.minPeakInhaled() else hardLimits.minPeak()
+        val maxPeak = if (isInhaled) hardLimits.maxPeakInhaled() else hardLimits.maxPeak()
+        if (editedICfg.peak < minPeak || editedICfg.peak > maxPeak) {
             showSnackbar(rh.gs(CoreUiR.string.value_out_of_hard_limits, rh.gs(CoreUiR.string.insulin_peak), editedICfg.peak))
             return false
         }
@@ -560,5 +562,9 @@ class InsulinManagementViewModel @Inject constructor(
         return if (isInhaled) hardLimits.minDiaInhaled()..hardLimits.maxDiaInhaled()
         else hardLimits.minDia()..hardLimits.maxDia()
     }
-    fun peakRange(): ClosedFloatingPointRange<Double> = hardLimits.minPeak().toDouble()..hardLimits.maxPeak().toDouble()
+    fun peakRange(): ClosedFloatingPointRange<Double> {
+        val isInhaled = _uiState.value.editorTemplate?.isInhaled == true
+        return if (isInhaled) hardLimits.minPeakInhaled().toDouble()..hardLimits.maxPeakInhaled().toDouble()
+        else hardLimits.minPeak().toDouble()..hardLimits.maxPeak().toDouble()
+    }
 }
