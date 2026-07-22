@@ -391,7 +391,7 @@ fun InsulinManagementScreen(
                                 valueRange = viewModel.peakRange(),
                                 step = 1.0,
                                 unitLabelResId = KeysR.string.units_min,
-                                enabled = editorEnabled && !isInhaledInsulin,
+                                enabled = editorEnabled,
                                 modifier = Modifier.fillMaxWidth()
                             )
 
