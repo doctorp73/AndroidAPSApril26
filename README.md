@@ -146,10 +146,10 @@ The Afrezza plugin adds support for **Technosphere inhaled insulin (Afrezza)** a
 1. Open AAPS, navigate to **Insulin Management**.
 2. Tap **+** to add a new insulin, and select **"Afrezza (Inhaled)"** from the template list.
 3. The editor opens with default values: **Peak 15 minutes**, **DIA 1.5 hours**, **Concentration U100** — Afrezza's actual clinical pharmacokinetics, distinct from your pump insulin's much longer curve.
-4. Both **Peak** (adjustable **10–20 minutes**) and **DIA** (adjustable **1.0–2.0 hours**) can be fine-tuned if you want to match your own response — e.g. a shorter DIA if Afrezza wears off faster for you. Most users can leave both at their defaults.
+4. Both **Peak** (adjustable **10–30 minutes**) and **DIA** (adjustable **1.0–3.0 hours**) can be fine-tuned if you want to match your own response — e.g. a shorter DIA if Afrezza wears off faster for you. This range is set wider than Afrezza's published clinical peak/duration (roughly 35–45 min peak effect, 1.5–3 h duration) to leave room for person-to-person variability. Most users can leave both at their defaults.
 5. Tap **Save**. Your Insulin Management list should now show both your pump insulin (unchanged, still your active profile insulin) and "Afrezza (Inhaled)" alongside it. Afrezza does not replace your pump insulin — it exists independently for manual logging only.
 
-**If the Peak/DIA sliders show the regular non-inhaled ranges (35–120 min / 5.0–10.0 h) instead of 10–20 min / 1.0–2.0 h**, the Afrezza template wasn't selected properly — go back and reselect "Afrezza (Inhaled)" from the template list.
+**If the Peak/DIA sliders show the regular non-inhaled ranges (35–120 min / 5.0–10.0 h) instead of 10–30 min / 1.0–3.0 h**, the Afrezza template wasn't selected properly — go back and reselect "Afrezza (Inhaled)" from the template list.
 
 ### Part 2: Logging an Afrezza Dose
 
@@ -161,12 +161,12 @@ The Afrezza plugin adds support for **Technosphere inhaled insulin (Afrezza)** a
 
 ### Part 3: Understanding Dual IOB Tracking
 
-AAPS tracks two separate IOB curves at once: your **pump insulin** (its normal DIA, typically 5+ hours) covering basal, SMBs, and manual pump boluses; and **Afrezza IOB** (peak 15min default, adjustable 10–20min; DIA 1.5h default, adjustable 1.0–2.0h) covering only doses logged through the Afrezza flow. The total IOB shown on the home screen is the sum of both, and AAPS uses the combined value for all predictions and dosing decisions.
+AAPS tracks two separate IOB curves at once: your **pump insulin** (its normal DIA, typically 5+ hours) covering basal, SMBs, and manual pump boluses; and **Afrezza IOB** (peak 15min default, adjustable 10–30min; DIA 1.5h default, adjustable 1.0–3.0h) covering only doses logged through the Afrezza flow. The total IOB shown on the home screen is the sum of both, and AAPS uses the combined value for all predictions and dosing decisions.
 
 ### Troubleshooting
 
 - **"Add Afrezza insulin in Insulin Management first"** — you haven't completed Part 1 yet.
-- **Peak/DIA sliders show 35–120 min / 5.0–10.0 h instead of 10–20 min / 1.0–2.0 h** — the wrong template was selected; reselect "Afrezza (Inhaled)" specifically.
+- **Peak/DIA sliders show 35–120 min / 5.0–10.0 h instead of 10–30 min / 1.0–3.0 h** — the wrong template was selected; reselect "Afrezza (Inhaled)" specifically.
 - **IOB seems too high after a dose** — check that your Afrezza insulin's DIA is actually set to your intended value (e.g. 1.5h), not left at a pump-insulin-length default.
 
 ---
