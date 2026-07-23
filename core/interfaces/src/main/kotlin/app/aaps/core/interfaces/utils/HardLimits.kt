@@ -18,11 +18,11 @@ interface HardLimits {
         val MIN_DIA = doubleArrayOf(5.0, 5.0, 5.0, 5.0, 5.0)
         val MAX_DIA = doubleArrayOf(10.0, 10.0, 10.0, 10.0, 10.0)
         val MIN_DIA_INHALED = doubleArrayOf(1.0, 1.0, 1.0, 1.0, 1.0) // Inhaled insulin (e.g. Afrezza) has shorter DIA
-        val MAX_DIA_INHALED = doubleArrayOf(2.0, 2.0, 2.0, 2.0, 2.0)
+        val MAX_DIA_INHALED = doubleArrayOf(3.0, 3.0, 3.0, 3.0, 3.0) // Widened toward Afrezza's own clinical duration-of-action data (1.5-3h) while leaving room for person-to-person variability
         const val MIN_PEAK = 35 // mgdl
         const val MAX_PEAK = 120 // mgdl
         const val MIN_PEAK_INHALED = 10 // minutes; Inhaled insulin (e.g. Afrezza) peaks much faster
-        const val MAX_PEAK_INHALED = 20 // minutes
+        const val MAX_PEAK_INHALED = 30 // minutes; widened toward Afrezza's own clinical peak-effect data (35-45min) while leaving room for person-to-person variability
         val MIN_IC = doubleArrayOf(2.0, 2.0, 2.0, 2.0, 0.3)
         val MAX_IC = doubleArrayOf(100.0, 100.0, 100.0, 100.0, 100.0)
         const val MIN_ISF = 2.0 // mgdl
