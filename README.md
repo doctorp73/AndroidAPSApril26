@@ -15,14 +15,15 @@ DEV:
 
 ---
 
-## This Branch: Eversense CGM (E3 / E365) + Afrezza Inhaled Insulin
+## This Branch: Eversense CGM (E3 / E365) + Afrezza Inhaled Insulin + Omnipod 5 (WIP)
 
-This branch adds two features on top of upstream AAPS:
+This branch adds three features on top of upstream AAPS:
 
 1. **Eversense CGM integration** — direct BLE connection to Eversense E3 and E365 transmitters as a native AAPS BG source, with calibration, alarms, DMS portal sync, and (for E365) cloud upload.
 2. **Afrezza inhaled insulin support** — a second, independently-tracked insulin curve for logging Technosphere inhaled insulin doses.
+3. **Omnipod 5 pump integration (Work in Progress)** — a from-scratch Bluetooth driver for the Omnipod 5 pod. Still under active development — see the dedicated section below before using it.
 
-Both are experimental, community-developed modifications. Neither is approved by any regulatory body. **Discuss any changes to your insulin regimen with your endocrinologist before use, and always keep fingerstick meter access as a backup.**
+All three are experimental, community-developed modifications. None is approved by any regulatory body. **Discuss any changes to your insulin regimen or pump with your endocrinologist before use, and always keep fingerstick meter access as a backup.**
 
 ---
 
@@ -170,7 +171,19 @@ AAPS tracks two separate IOB curves at once: your **pump insulin** (its normal D
 
 ---
 
+## Omnipod 5 Pump Integration (Work in Progress)
+
+⚠️ **This integration is under active development and is NOT considered stable for real-world dosing decisions.** Pairing, status parsing, and dosing command paths exist and are being tested, but the driver has not been validated through extended real-world use.
+
+- Expect breaking changes between commits.
+- Verify every dose and pod status against the physical pod/PDM before trusting it.
+- Do not rely on this integration as your sole means of insulin delivery or monitoring.
+- Check the branch's commit history for the current state of Omnipod 5 support before use.
+
+---
+
 ## Known Limitations
 
 - The Eversense connection logic is actively evolving. Check the branch's commit history for the latest state before relying on it in a real-world dosing decision.
 - The E365/official-app contention issue is a platform-level Android Bluetooth limitation (only one app can hold an active GATT connection to the transmitter at a time), not a bug specific to either app. There is no way to make two apps share the connection simultaneously for the E365.
+- Omnipod 5 pump support is a Work in Progress — see the dedicated section above.
