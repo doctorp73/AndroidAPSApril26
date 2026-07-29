@@ -5,6 +5,7 @@ import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.aaps.core.data.model.EPS
+import app.aaps.core.data.model.ICfg
 import app.aaps.core.data.model.TT
 import app.aaps.core.data.time.T
 import app.aaps.core.data.ue.Sources
@@ -13,12 +14,12 @@ import app.aaps.core.graph.profile.buildProfileCompareData
 import app.aaps.core.interfaces.bolus.BatchAction
 import app.aaps.core.interfaces.bolus.BatchExecutor
 import app.aaps.core.interfaces.clientcontrol.ActionProgress
-import app.aaps.core.ui.clientcontrol.failTextResId
 import app.aaps.core.interfaces.clientcontrol.FailureReason
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.db.compensateForClockSkew
 import app.aaps.core.interfaces.di.ApplicationScope
+import app.aaps.core.interfaces.insulin.InsulinManager
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
@@ -40,6 +41,7 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.extensions.toPureProfile
 import app.aaps.core.objects.profile.ProfileSealed
 import app.aaps.core.ui.R
+import app.aaps.core.ui.clientcontrol.failTextResId
 import app.aaps.core.ui.compose.ScreenMode
 import app.aaps.core.ui.compose.icons.IcProfile
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -54,8 +56,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.onEach
@@ -89,6 +91,7 @@ class ProfileManagementViewModel @Inject constructor(
     val profileUtil: ProfileUtil,
     val decimalFormatter: DecimalFormatter,
     private val persistenceLayer: PersistenceLayer,
+    private val insulinManager: InsulinManager,
     private val preferences: Preferences,
     private val config: Config,
     private val batchExecutor: BatchExecutor,
@@ -536,12 +539,34 @@ class ProfileManagementViewModel @Inject constructor(
     }
 
     /**
+     * What the activation screen should offer for insulin.
+     *
+     * [choices] is empty in the normal case — something is running or pending, so the master resolves the
+     * in-force insulin itself and the screen shows no picker. It is non-empty only when nothing is in force
+     * (typically the first-ever switch): the switch still has to record an insulin, and a catalogue entry is
+     * never substituted silently, so the user picks one and activation stays disabled until they do.
+     */
+    data class InsulinChoice(val choices: List<ICfg>, val preselected: ICfg?)
+
+    suspend fun insulinChoice(): InsulinChoice {
+        if (profileFunction.getRunningOrRequestedICfg() != null) return InsulinChoice(emptyList(), null)
+        val catalogue = insulinManager.insulins.toList()
+        // Suggest whatever the user last switched with. Matched by label, because the switch stores a value
+        // snapshot of the config rather than a reference to the catalogue entry.
+        val lastLabel = persistenceLayer.getProfileSwitches().maxByOrNull { it.timestamp }?.iCfg?.insulinLabel
+        return InsulinChoice(catalogue, catalogue.firstOrNull { it.insulinLabel == lastLabel })
+    }
+
+    /**
      * Activate a named profile. Routes through the role-transparent [BatchExecutor] so a client relays the switch
      * to the master (which resolves the name in its own store); on the master it applies locally. The master-authored
      * confirmation lines are shown as the single confirm dialog, and an optional activity temp-target rides the same
      * atomic batch. Returns true when the switch was prepared (the confirm dialog is shown), false on a pre-check reject.
      * [onSuccess] is invoked on the main thread ONLY after the user confirms and the switch is actually committed
      * (ActionProgress.Applied) — so a caller can close the screen on real activation, not merely when the dialog appears.
+     *
+     * [iCfg] is the insulin the user picked when nothing was in force (see [insulinChoice]); null lets the master
+     * resolve the in-force one, or refuse when there is none.
      *
      * Note: back-dating ([timestamp]/[timeChanged]) isn't carried through the batch path — the master stamps now().
      */
@@ -555,6 +580,7 @@ class ProfileManagementViewModel @Inject constructor(
         notes: String,
         timestamp: Long = dateUtil.now(),
         timeChanged: Boolean = false,
+        iCfg: ICfg? = null,
         onSuccess: () -> Unit = {}
     ): Boolean {
         val profileNames = uiState.value.profileNames
@@ -576,7 +602,7 @@ class ProfileManagementViewModel @Inject constructor(
         }
 
         val actions = buildList {
-            add(BatchAction.ProfileSwitch(percentage, timeshiftHours, durationMinutes, profileName = profileName, notes = notes.ifBlank { null }))
+            add(BatchAction.ProfileSwitch(percentage, timeshiftHours, durationMinutes, profileName = profileName, notes = notes.ifBlank { null }, iCfg = iCfg))
             // An activity temp-target rides the same batch (raising → applied first, atomically with the switch).
             if (withTT && durationMinutes > 0 && percentage < 100) {
                 val targetMgdl = preferences.ttTargetMgdl(TT.Reason.ACTIVITY)
@@ -592,17 +618,19 @@ class ProfileManagementViewModel @Inject constructor(
                         onOk = {
                             appScope.launch {
                                 when (val result = batchExecutor.commit(prepared.id, Sources.ProfileSwitchDialog, label)) {
-                                    is ActionProgress.Applied -> {
+                                    is ActionProgress.Applied  -> {
                                         if (percentage == 90 && durationMinutes == 10) preferences.put(BooleanNonKey.ObjectivesProfileSwitchUsed, true)
                                         withContext(Dispatchers.Main) { onSuccess() }
                                     }
+
                                     is ActionProgress.Rejected ->
                                         if (result.reason == FailureReason.NotReachable || result.reason == FailureReason.ControlDisabled)
                                             rxBus.send(EventShowDialog.Ok(title = label, message = rh.gs(result.reason.failTextResId())))
                                         else result.detail?.let { detail ->
                                             rxBus.send(EventShowDialog.Ok(title = label, message = detail))
                                         }
-                                    else                      -> Unit // Unconfirmed → app-level modal
+
+                                    else                       -> Unit // Unconfirmed → app-level modal
                                 }
                             }
                         }
