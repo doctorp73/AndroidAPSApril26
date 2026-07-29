@@ -22,6 +22,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.legacy.io.CmdBleIO
 import app.aaps.pump.omnipod.common.bledriver.comm.legacy.io.DataBleIO
 import app.aaps.pump.omnipod.common.bledriver.comm.legacy.io.IncomingPackets
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageIO
+import app.aaps.pump.omnipod.common.bledriver.comm.packet.BlePacketLayout
 import app.aaps.pump.omnipod.common.bledriver.comm.session.Connected
 import app.aaps.pump.omnipod.common.bledriver.comm.session.ConnectionState
 import app.aaps.pump.omnipod.common.bledriver.comm.session.ConnectionWaitCondition
@@ -106,6 +107,26 @@ class O5Connection(
             connectionWaitCond.timeoutMs = newTimeout
         }
         podState.bluetoothConnectionState = O5PodStateManager.BluetoothConnectionState.CONNECTED
+
+        // Unlike iOS's CoreBluetooth (which negotiates the ATT MTU automatically), Android
+        // stays at the default 23-byte MTU (20 usable payload bytes) until the app explicitly
+        // requests more - and O5's packet layout allows payloads up to 244 bytes (see
+        // BlePacketLayout.OMNIPOD_5), so without this, any O5 message needing more than one
+        // ~18-byte fragment would get silently truncated on the wire. Dash doesn't need this:
+        // its 20-byte packets already fit the un-negotiated default.
+        val requestedMtu = BlePacketLayout.OMNIPOD_5.maxPayloadSize + ATT_HEADER_SIZE
+        if (!gatt.requestMtu(requestedMtu)) {
+            throw FailedToConnectException("requestMtu($requestedMtu) returned false")
+        }
+        if (!bleCommCallbacks.waitForMtuChange(MTU_NEGOTIATION_TIMEOUT_MS)) {
+            throw FailedToConnectException("Timed out waiting for MTU negotiation")
+        }
+        if (bleCommCallbacks.negotiatedMtu < requestedMtu) {
+            aapsLogger.warn(
+                LTag.PUMPBTCOMM,
+                "Pod granted a smaller MTU than requested (O5): ${bleCommCallbacks.negotiatedMtu} < $requestedMtu"
+            )
+        }
 
         val discoverer = ServiceDiscoverer(aapsLogger, gatt, bleCommCallbacks, this)
         val discovered = discoverer.discoverServices(connectionWaitCond, PodType.OMNIPOD_5)
@@ -225,5 +246,9 @@ class O5Connection(
         const val MIN_DISCOVERY_TIMEOUT_MS = 10000L
         const val MAX_WAIT_FOR_CONNECTION_SECONDS = Constants.PUMP_MAX_CONNECTION_TIME_IN_SECONDS + 10
         const val SLEEP_WHEN_FAILING_TO_CONNECT_GATT = 10000L
+
+        /** BLE ATT opcode (1 byte) + attribute handle (2 bytes) overhead per spec. */
+        private const val ATT_HEADER_SIZE = 3
+        private const val MTU_NEGOTIATION_TIMEOUT_MS = 5000L
     }
 }

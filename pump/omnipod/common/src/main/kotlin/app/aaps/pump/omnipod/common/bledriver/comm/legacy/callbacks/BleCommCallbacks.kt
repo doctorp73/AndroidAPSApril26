@@ -32,7 +32,15 @@ class BleCommCallbacks(
     private var connected: CountDownLatch = CountDownLatch(1)
         @Synchronized get
         @Synchronized set
+    private var mtuNegotiationComplete: CountDownLatch = CountDownLatch(1)
+        @Synchronized get
+        @Synchronized set
     private val writeQueue: BlockingQueue<WriteConfirmation> = LinkedBlockingQueue()
+
+    /** The ATT MTU last confirmed via [onMtuChanged]; the BLE-spec default until negotiated. */
+    @Volatile
+    var negotiatedMtu: Int = DEFAULT_ATT_MTU
+        private set
 
     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
         aapsLogger.debug(LTag.PUMPBTCOMM, "OnConnectionStateChange with status/state: $status/$newState")
@@ -153,6 +161,24 @@ class BleCommCallbacks(
             LTag.PUMPBTCOMM,
             "onMtuChanged with MTU/status: $mtu/$status "
         )
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            negotiatedMtu = mtu
+        }
+        mtuNegotiationComplete.countDown()
+    }
+
+    /**
+     * @return true once [onMtuChanged] has fired (successfully or not); false on timeout.
+     * Callers should check [negotiatedMtu] afterwards to see what was actually granted.
+     */
+    fun waitForMtuChange(timeoutMs: Long): Boolean {
+        val latch = mtuNegotiationComplete
+        try {
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            aapsLogger.warn(LTag.PUMPBTCOMM, "Interrupted while waiting for MTU negotiation")
+        }
+        return latch.count == 0L
     }
 
     override fun onReadRemoteRssi(gatt: BluetoothGatt?, rssi: Int, status: Int) {
@@ -210,13 +236,19 @@ class BleCommCallbacks(
         aapsLogger.debug(LTag.PUMPBTCOMM, "Reset connection")
         connected.countDown()
         serviceDiscoveryComplete.countDown()
+        mtuNegotiationComplete.countDown()
         connected = CountDownLatch(1)
         serviceDiscoveryComplete = CountDownLatch(1)
+        mtuNegotiationComplete = CountDownLatch(1)
+        negotiatedMtu = DEFAULT_ATT_MTU
         flushConfirmationQueue()
     }
 
     companion object {
         // the confirmation queue should be empty anyway
         private const val WRITE_CONFIRM_TIMEOUT_MS = 10
+
+        /** BLE-spec default ATT MTU (23 bytes total, 20 usable payload) before any negotiation. */
+        const val DEFAULT_ATT_MTU = 23
     }
 }

@@ -200,6 +200,15 @@ class O5ConnectionTest {
             gatt
         }
 
+        // requestMtu(): fire onMtuChanged synchronously, echoing back whatever MTU was
+        // actually requested (granted in full) - same reason as the other GATT calls
+        // below, avoids blocking on O5Connection's real MTU_NEGOTIATION_TIMEOUT_MS wait.
+        whenever(gatt.requestMtu(any())).thenAnswer { invocation ->
+            val requestedMtu = invocation.getArgument<Int>(0)
+            bleCommCallbacks!!.onMtuChanged(gatt, requestedMtu, BluetoothGatt.GATT_SUCCESS)
+            true
+        }
+
         // discoverServices: fire the services-discovered callback synchronously for the
         // same reason - avoids O5Connection's 10s MIN_DISCOVERY_TIMEOUT_MS floor turning
         // this into a slow test.
