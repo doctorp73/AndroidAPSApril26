@@ -41,7 +41,6 @@ import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.db.ProcessedTbrEbData
 import app.aaps.core.interfaces.insulin.ConcentrationHelper
-import app.aaps.core.interfaces.insulin.Insulin
 // Afrezza: cartridge-to-ICfg lookup in handleAfrezzaPreCheck/doAfrezzaBolus below.
 import app.aaps.core.interfaces.insulin.InsulinManager
 import app.aaps.core.interfaces.insulin.InsulinType
