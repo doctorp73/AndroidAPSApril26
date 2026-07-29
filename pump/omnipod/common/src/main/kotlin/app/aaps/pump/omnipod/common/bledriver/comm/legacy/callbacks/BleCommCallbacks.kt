@@ -11,6 +11,7 @@ import app.aaps.core.utils.toHex
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.CharacteristicType.Companion.byValue
 import app.aaps.pump.omnipod.common.bledriver.comm.legacy.io.IncomingPackets
 import app.aaps.pump.omnipod.common.bledriver.comm.session.DisconnectHandler
+import app.aaps.pump.omnipod.common.bledriver.pod.util.BluetoothServiceUuids
 import java.util.UUID
 import java.util.concurrent.BlockingQueue
 import java.util.concurrent.CountDownLatch
@@ -128,7 +129,18 @@ class BleCommCallbacks(
         super.onCharacteristicChanged(gatt, characteristic)
 
         val payload = characteristic.value
-        val characteristicType = byValue(characteristic.uuid.toString())
+        val uuid = characteristic.uuid.toString()
+
+        // O5's heartbeat characteristic (see O5Connection.enableHeartbeatNotifications) has
+        // no CharacteristicType entry and nothing consumes it from a queue - it's a passive
+        // keep-alive signal, not part of the request/response message protocol. Handle it
+        // here before byValue() so an unrecognized UUID doesn't throw.
+        if (uuid.equals(BluetoothServiceUuids.O5_HEARTBEAT_CHARACTERISTIC_UUID, ignoreCase = true)) {
+            aapsLogger.debug(LTag.PUMPBTCOMM, "Received O5 heartbeat: ${payload.toHex()}")
+            return
+        }
+
+        val characteristicType = byValue(uuid)
 
         aapsLogger.debug(
             LTag.PUMPBTCOMM,
