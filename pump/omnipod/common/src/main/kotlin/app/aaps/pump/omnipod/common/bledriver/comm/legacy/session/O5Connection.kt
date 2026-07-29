@@ -121,7 +121,8 @@ class O5Connection(
             discovered.getValue(CharacteristicType.DATA),
             incomingPackets.dataQueue,
             gatt,
-            bleCommCallbacks
+            bleCommCallbacks,
+            CharacteristicType.DATA_O5
         )
         msgIO = MessageIO(aapsLogger, cmdBleIO, dataBleIO, PodType.OMNIPOD_5)
         cmdBleIO.hello()
