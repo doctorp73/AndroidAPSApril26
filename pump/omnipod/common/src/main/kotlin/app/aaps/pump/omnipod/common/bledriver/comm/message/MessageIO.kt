@@ -22,6 +22,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.DataBleIO
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.BlePacket
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.PayloadJoiner
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.PayloadSplitter
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodType
 
 sealed class MessageSendResult
 object MessageSendSuccess : MessageSendResult()
@@ -41,6 +42,7 @@ class MessageIO(
     private val aapsLogger: AAPSLogger,
     private val cmdBleIO: CmdBleIO,
     private val dataBleIO: DataBleIO,
+    private val podType: PodType = PodType.DASH,
 ) {
 
     private val receivedOutOfOrder = LinkedHashMap<Byte, ByteArray>()
@@ -57,13 +59,20 @@ class MessageIO(
         }
         dataBleIO.flushIncomingQueue()
 
-        val rtsSendResult = cmdBleIO.sendAndConfirmPacket(BleCommandRTS.data)
-        if (rtsSendResult is BleSendErrorSending) {
-            return MessageSendErrorSending(rtsSendResult)
-        }
-        val expectCTS = cmdBleIO.expectCommandType(BleCommandCTS)
-        if (expectCTS !is BleConfirmSuccess) {
-            return MessageSendErrorSending(expectCTS.toString())
+        // RTS/CTS flow control is Dash-specific - Omnipod 5 pods write data packets
+        // directly with no request/clear-to-send preamble (see OmnipodKit's
+        // PeripheralManager+OmnipodKit.swift sendMessagePacket(): `if podType.isDash {
+        // RTS/CTS } else { skip, write directly }`). Sending RTS to an O5 pod gets no
+        // response at all, since it doesn't speak that handshake.
+        if (podType.isDash) {
+            val rtsSendResult = cmdBleIO.sendAndConfirmPacket(BleCommandRTS.data)
+            if (rtsSendResult is BleSendErrorSending) {
+                return MessageSendErrorSending(rtsSendResult)
+            }
+            val expectCTS = cmdBleIO.expectCommandType(BleCommandCTS)
+            if (expectCTS !is BleConfirmSuccess) {
+                return MessageSendErrorSending(expectCTS.toString())
+            }
         }
 
         val payload = msg.asByteArray()
@@ -108,18 +117,23 @@ class MessageIO(
 
     @Suppress("ReturnCount")
     fun receiveMessage(readRTS: Boolean = true): MessagePacket? {
-        if (readRTS) {
-            val expectRTS = cmdBleIO.expectCommandType(BleCommandRTS, MESSAGE_READ_TIMEOUT_MS)
-            if (expectRTS !is BleConfirmSuccess) {
-                aapsLogger.warn(LTag.PUMPBTCOMM, "Error reading RTS: $expectRTS")
+        // Same Dash-only RTS/CTS gating as sendMessage() - see the comment there. An O5
+        // pod sends its response data directly with no RTS to wait for and no CTS it
+        // expects back.
+        if (podType.isDash) {
+            if (readRTS) {
+                val expectRTS = cmdBleIO.expectCommandType(BleCommandRTS, MESSAGE_READ_TIMEOUT_MS)
+                if (expectRTS !is BleConfirmSuccess) {
+                    aapsLogger.warn(LTag.PUMPBTCOMM, "Error reading RTS: $expectRTS")
+                    return null
+                }
+            }
+
+            val sendResult = cmdBleIO.sendAndConfirmPacket(BleCommandCTS.data)
+            if (sendResult !is BleSendSuccess) {
+                aapsLogger.warn(LTag.PUMPBTCOMM, "Error sending CTS: $sendResult")
                 return null
             }
-        }
-
-        val sendResult = cmdBleIO.sendAndConfirmPacket(BleCommandCTS.data)
-        if (sendResult !is BleSendSuccess) {
-            aapsLogger.warn(LTag.PUMPBTCOMM, "Error sending CTS: $sendResult")
-            return null
         }
         readReset()
         var expected: Byte = 0

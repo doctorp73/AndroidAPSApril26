@@ -123,7 +123,7 @@ class O5Connection(
             gatt,
             bleCommCallbacks
         )
-        msgIO = MessageIO(aapsLogger, cmdBleIO, dataBleIO)
+        msgIO = MessageIO(aapsLogger, cmdBleIO, dataBleIO, PodType.OMNIPOD_5)
         cmdBleIO.hello()
         cmdBleIO.readyToRead()
         dataBleIO.readyToRead()
