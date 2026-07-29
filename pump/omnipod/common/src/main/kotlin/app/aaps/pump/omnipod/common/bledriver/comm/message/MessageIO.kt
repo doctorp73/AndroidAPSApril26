@@ -57,14 +57,16 @@ class MessageIO(
     // the pod actually being talked to.
     private val packetLayout: BlePacketLayout = podType.blePacketLayout
 
-    // Swift's PeripheralManager.waitForData() waits up to 5s for every single data packet,
-    // Dash included - but Dash pods are RTS/CTS-paced, so in practice they respond well
-    // within Android's 1s default before this ever matters. O5 has no such pacing (see the
-    // isDash gate above), and on real hardware "Could not read SPS0" - the pod's very first
-    // response after pairing begins - lined up exactly with running out of the shorter
-    // 3x1s budget this used to always use. Scoped to O5 only: Dash's existing 1s default is
-    // proven against real Dash hardware and left untouched.
-    private val packetReadTimeoutMs: Long =
+    // Swift's PeripheralManager waits up to 5s for every data packet and command response
+    // alike (waitForData/waitForCommand), Dash included - but Dash pods are RTS/CTS-paced,
+    // so in practice they respond well within Android's 1s default before this ever
+    // matters. O5 has no such pacing (see the isDash gates above/below), and on real
+    // hardware "Could not read SPS0" - the pod's very first response after pairing begins -
+    // lined up exactly with running out of the shorter 3x1s budget this used to always use.
+    // Scoped to O5 only: Dash's existing 1s default is proven against real Dash hardware and
+    // left untouched. Used for both dataBleIO.receivePacket() and the trailing
+    // cmdBleIO.expectCommandType(SUCCESS) wait in sendMessage() below.
+    private val readTimeoutMs: Long =
         if (podType.isO5) MESSAGE_READ_TIMEOUT_MS else BleCharacteristicIO.DEFAULT_IO_TIMEOUT_MS
 
     @Suppress("ReturnCount")
@@ -114,7 +116,7 @@ class MessageIO(
             }
         }
 
-        return when (val expectSuccess = cmdBleIO.expectCommandType(BleCommandSuccess)) {
+        return when (val expectSuccess = cmdBleIO.expectCommandType(BleCommandSuccess, readTimeoutMs)) {
             is BleConfirmSuccess       ->
                 MessageSendSuccess
 
@@ -248,7 +250,7 @@ class MessageIO(
         while (messageReadTries < maxMessageReadTries && packetTries < MAX_PACKET_READ_TRIES) {
             messageReadTries++
             packetTries++
-            val received = dataBleIO.receivePacket(packetReadTimeoutMs)
+            val received = dataBleIO.receivePacket(readTimeoutMs)
             if (received == null || received.isEmpty()) {
                 if (nackOnTimeout)
                     cmdBleIO.sendAndConfirmPacket(BleCommandNack(index).data)
