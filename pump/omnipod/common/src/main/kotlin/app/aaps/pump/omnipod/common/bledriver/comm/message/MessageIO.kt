@@ -20,8 +20,10 @@ import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.BleSendSuccess
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.CmdBleIO
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.DataBleIO
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.BlePacket
+import app.aaps.pump.omnipod.common.bledriver.comm.packet.BlePacketLayout
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.PayloadJoiner
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.PayloadSplitter
+import app.aaps.pump.omnipod.common.bledriver.comm.packet.blePacketLayout
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodType
 
 sealed class MessageSendResult
@@ -48,6 +50,11 @@ class MessageIO(
     private val receivedOutOfOrder = LinkedHashMap<Byte, ByteArray>()
     var maxMessageReadTries = 3
     var messageReadTries = 0
+
+    // Dash packets max out at 20 bytes; O5 allows 244-byte packets (see BlePacketLayout /
+    // OmnipodKit's BlePodProfile.swift). Splitting/joining must use the profile matching
+    // the pod actually being talked to.
+    private val packetLayout: BlePacketLayout = podType.blePacketLayout
 
     @Suppress("ReturnCount")
     fun sendMessage(msg: MessagePacket): MessageSendResult {
@@ -77,12 +84,12 @@ class MessageIO(
 
         val payload = msg.asByteArray()
         aapsLogger.debug(LTag.PUMPBTCOMM, "Sending message: ${payload.toHex()}")
-        val splitter = PayloadSplitter(payload)
+        val splitter = PayloadSplitter(payload, packetLayout)
         val packets = splitter.splitInPackets()
 
         for ((index, packet) in packets.withIndex()) {
-            aapsLogger.debug(LTag.PUMPBTCOMM, "Sending DATA: ${packet.toByteArray().toHex()}")
-            val sendResult = dataBleIO.sendAndConfirmPacket(packet.toByteArray())
+            aapsLogger.debug(LTag.PUMPBTCOMM, "Sending DATA: ${packet.toByteArray(packetLayout).toHex()}")
+            val sendResult = dataBleIO.sendAndConfirmPacket(packet.toByteArray(packetLayout))
             val ret = handleSendResult(sendResult, index, packets)
             if (ret !is MessageSendSuccess) {
                 return ret
@@ -143,7 +150,7 @@ class MessageIO(
                 aapsLogger.warn(LTag.PUMPBTCOMM, "Error reading first packet:$firstPacket")
                 return null
             }
-            val joiner = PayloadJoiner(firstPacket.payload)
+            val joiner = PayloadJoiner(firstPacket.payload, packetLayout)
             maxMessageReadTries = joiner.fullFragments * 2 + 2
             for (i in 1 until joiner.fullFragments + 1) {
                 expected++
@@ -204,7 +211,7 @@ class MessageIO(
                 if (received == null) {
                     MessageSendErrorSending(received.toString())
                 } else {
-                    val sendResult = dataBleIO.sendAndConfirmPacket(packets[receivedCmd.idx.toInt()].toByteArray())
+                    val sendResult = dataBleIO.sendAndConfirmPacket(packets[receivedCmd.idx.toInt()].toByteArray(packetLayout))
                     handleSendResult(sendResult, index, packets)
                 }
             }
