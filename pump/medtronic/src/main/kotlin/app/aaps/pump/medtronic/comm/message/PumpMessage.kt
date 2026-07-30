@@ -135,6 +135,11 @@ class PumpMessage : RLMessage {
     override fun isValid(): Boolean {
         if (packetType == null) return false
         if (address == null) return false
+        // MedtronicCommandType.InvalidCommand (a real, non-null enum value returned by getByCode()
+        // for an unrecognized command byte) is already logged as an error in init() above, but was
+        // never actually rejected here - a garbled/unrecognized response commandType still passed
+        // isValid() and had its content treated as usable data.
+        if (commandType == MedtronicCommandType.InvalidCommand) return false
         return if (commandType == null) false else messageBody != null
     }
 
