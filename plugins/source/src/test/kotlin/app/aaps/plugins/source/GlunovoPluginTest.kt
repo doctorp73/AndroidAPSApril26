@@ -2,6 +2,7 @@ package app.aaps.plugins.source
 
 import android.content.ContentResolver
 import android.database.Cursor
+import android.net.Uri
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.model.GV
 import app.aaps.core.data.model.GlucoseUnit
@@ -14,12 +15,16 @@ import app.aaps.plugins.source.keys.GlunovoLongKey
 import app.aaps.shared.tests.TestBaseWithProfile
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mock
+import org.mockito.MockedStatic
+import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
@@ -32,8 +37,20 @@ class GlunovoPluginTest : TestBaseWithProfile() {
 
     private lateinit var glunovoPlugin: GlunovoPlugin
 
+    // GlunovoPlugin's constructor eagerly builds its content:// Uri via Uri.parse() (through
+    // the .toUri() extension). The unit-test android.jar stub returns null from Uri.parse()
+    // (no Robolectric here), and Kotlin's compiler-generated null-check on .toUri()'s declared
+    // non-null return type then throws before the constructor even finishes - independent of
+    // anything this test itself sets up. Static-mocking Uri.parse() sidesteps the stub; the
+    // actual Uri value returned doesn't matter since every test already matches
+    // contentResolver.query() calls with anyOrNull().
+    private lateinit var uriMockedStatic: MockedStatic<Uri>
+
     @BeforeEach
     fun setup() {
+        uriMockedStatic = Mockito.mockStatic(Uri::class.java)
+        uriMockedStatic.`when`<Uri> { Uri.parse(any()) }.thenReturn(mock())
+
         whenever(context.contentResolver).thenReturn(contentResolver)
         whenever(contentResolver.query(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull())).thenReturn(cursor)
         runTest {
@@ -45,6 +62,11 @@ class GlunovoPluginTest : TestBaseWithProfile() {
         // Default cursor to be empty
         whenever(cursor.isAfterLast).thenReturn(true)
         whenever(cursor.moveToFirst()).thenReturn(false)
+    }
+
+    @AfterEach
+    fun tearDown() {
+        uriMockedStatic.close()
     }
 
     @Test
