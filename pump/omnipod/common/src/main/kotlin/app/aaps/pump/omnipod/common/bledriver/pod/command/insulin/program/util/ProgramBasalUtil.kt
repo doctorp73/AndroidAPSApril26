@@ -37,9 +37,13 @@ object ProgramBasalUtil {
                         (previousTenthPulsesPerSlot * numberOfSlotsInCurrentElement).toShort()
                     )
                 )
+                // Advance by the just-finished element's slot count, captured before it's reset below -
+                // doing this after the reset (as before) always added exactly 1, so every element past
+                // the second got the wrong startSlotIndex. Debug-log-only today (BasalInsulinProgramElement
+                // .encoded never serializes startSlotIndex), but worth being correct regardless.
+                startSlotIndex = (numberOfSlotsInCurrentElement + startSlotIndex).toByte()
                 previousTenthPulsesPerSlot = tenthPulsesPerSlot[i]
                 numberOfSlotsInCurrentElement = 1
-                startSlotIndex = (numberOfSlotsInCurrentElement + startSlotIndex).toByte()
             } else {
                 numberOfSlotsInCurrentElement++
             }
