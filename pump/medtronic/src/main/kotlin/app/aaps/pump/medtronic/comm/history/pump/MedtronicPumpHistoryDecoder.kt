@@ -335,25 +335,25 @@ class MedtronicPumpHistoryDecoder @Inject constructor(
         if (MedtronicDeviceType.isSameDevice(medtronicUtil.medtronicPumpModel, MedtronicDeviceType.Medtronic_523andHigher)) {
             // https://github.com/ps2/minimed_rf/blob/master/lib/minimed_rf/log_entries/bolus_wizard.rb#L102
             bolusStrokes = 40.0f
-            dto.carbs = ((body[1] and 0x0c.toByte()).toInt() shl 6) + body[0]
+            dto.carbs = ((body[1] and 0x0c.toByte()).toInt() shl 6) + ByteUtil.asUINT8(body[0])
             dto.bloodGlucose = ((body[1] and 0x03).toInt() shl 8) + entry.head[0]
             dto.carbRatio = body[1] / 10.0f
             // carb_ratio (?) = (((self.body[2] & 0x07) << 8) + self.body[3]) /
             // 10.0s
             dto.insulinSensitivity = body[4].toFloat()
-            dto.bgTargetLow = body[5].toInt()
-            dto.bgTargetHigh = body[14].toInt()
+            dto.bgTargetLow = ByteUtil.asUINT8(body[5])
+            dto.bgTargetHigh = ByteUtil.asUINT8(body[14])
             dto.correctionEstimate = (((body[9] and 0x38).toInt() shl 5) + body[6]) / bolusStrokes
             dto.foodEstimate = ((body[7].toInt() shl 8) + body[8]) / bolusStrokes
             dto.unabsorbedInsulin = ((body[10].toInt() shl 8) + body[11]) / bolusStrokes
             dto.bolusTotal = ((body[12].toInt() shl 8) + body[13]) / bolusStrokes
         } else {
             dto.bloodGlucose = (body[1] and 0x0F).toInt() shl 8 or entry.head[0].toInt()
-            dto.carbs = body[0].toInt()
+            dto.carbs = ByteUtil.asUINT8(body[0])
             dto.carbRatio = body[2].toFloat()
             dto.insulinSensitivity = body[3].toFloat()
-            dto.bgTargetLow = body[4].toInt()
-            dto.bgTargetHigh = body[12].toInt()
+            dto.bgTargetLow = ByteUtil.asUINT8(body[4])
+            dto.bgTargetHigh = ByteUtil.asUINT8(body[12])
             dto.bolusTotal = body[11] / bolusStrokes
             dto.foodEstimate = body[6] / bolusStrokes
             dto.unabsorbedInsulin = body[9] / bolusStrokes
@@ -374,10 +374,10 @@ class MedtronicPumpHistoryDecoder @Inject constructor(
         val dto = BolusWizardDTO()
         val bolusStrokes = 10.0f
         dto.bloodGlucose = (body.get(1) and 0x03).toInt() shl 8 or entry.head.get(0).toInt()
-        dto.carbs = body.get(1).toInt() and 0xC shl 6 or body.get(0).toInt() // (int)body[0];
+        dto.carbs = body.get(1).toInt() and 0xC shl 6 or ByteUtil.asUINT8(body.get(0))
         dto.carbRatio = body.get(2).toFloat()
         dto.insulinSensitivity = body.get(3).toFloat()
-        dto.bgTargetLow = body.get(4).toInt()
+        dto.bgTargetLow = ByteUtil.asUINT8(body.get(4))
         dto.foodEstimate = body.get(6) / 10.0f
         dto.correctionEstimate = (body.get(7) + (body.get(5) and 0x0F)) / bolusStrokes
         dto.unabsorbedInsulin = body.get(9) / bolusStrokes
