@@ -72,8 +72,16 @@ class MedtronicUIPostprocessor @Inject constructor(
             }
 
             MedtronicCommandType.SetBolus            -> {
-                medtronicPumpStatus.lastBolusAmount = uiTask.getDoubleFromParameters(0)
-                medtronicPumpStatus.lastBolusTime = Date()
+                // uiTask.result is a Boolean pump-command result (false on NAK/comm failure, same as
+                // the SetBasalProfileSTD/SetRealTimeClock branches above, which do check it) - without
+                // this guard a failed SetBolus still updated the cached "last bolus" status as if it
+                // had been delivered. MedtronicPumpPlugin.deliverBolus() separately checks this same
+                // result before syncing to pumpSyncStorage, so this only ever corrupted the cached
+                // status/UI display, not the actual treatment history.
+                if (uiTask.result as Boolean? == true) {
+                    medtronicPumpStatus.lastBolusAmount = uiTask.getDoubleFromParameters(0)
+                    medtronicPumpStatus.lastBolusTime = Date()
+                }
             }
 
             MedtronicCommandType.GetRemainingInsulin -> {
@@ -81,9 +89,15 @@ class MedtronicUIPostprocessor @Inject constructor(
             }
 
             MedtronicCommandType.CancelTBR           -> {
-                medtronicPumpStatus.tempBasalStart = null
-                medtronicPumpStatus.tempBasalAmount = null
-                medtronicPumpStatus.tempBasalDuration = null
+                // Same as SetBolus above: only clear the cached TBR status once the pump actually
+                // confirmed the cancel. MedtronicPumpPlugin.setTempBasalAbsolute() separately checks
+                // this same result before syncing, so this only ever corrupted the cached status/UI
+                // display (e.g. showing no active TBR when the pump was still running one).
+                if (uiTask.result as Boolean? == true) {
+                    medtronicPumpStatus.tempBasalStart = null
+                    medtronicPumpStatus.tempBasalAmount = null
+                    medtronicPumpStatus.tempBasalDuration = null
+                }
             }
 
             MedtronicCommandType.GetRealTimeClock    -> {
