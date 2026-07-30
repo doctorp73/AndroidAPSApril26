@@ -93,6 +93,15 @@ class EversensePlugin @Inject constructor(
     aapsLogger, rh, preferences, config
 ), BgSource, EversenseWatcher {
 
+    companion object {
+
+        // See onAlarmReceived()'s isSpuriousPostExitFault comment: the transmitter's spurious
+        // post-exit CRITICAL_FAULT arrives ~1-2s after exitPositioningMode() per device logs; this
+        // is a generous margin over that without being wide enough to risk masking an unrelated
+        // real fault that happens to follow shortly after someone closes the placement guide.
+        private const val CRITICAL_FAULT_SUPPRESS_WINDOW_MS = 5000L
+    }
+
     @Inject lateinit var persistenceLayer: PersistenceLayer
 
     override var sensorBatteryLevel = -1
@@ -443,6 +452,18 @@ class EversensePlugin @Inject constructor(
             }
         } else {
             alarm.code.title
+        }
+        // The transmitter reliably pushes a spurious, ambiguous CRITICAL_FAULT within ~1-2s of us
+        // exiting diagnostic/positioning mode (confirmed from device logs: signal/battery/
+        // calibration all healthy at the time). Only suppress the generic "Transmitter Error" case
+        // above, not a title that got reinterpreted as a genuine calibration-due alarm, and only
+        // within a narrow window - a CRITICAL_FAULT at any other time still alerts normally.
+        val isSpuriousPostExitFault = alarm.code == EversenseAlarm.CRITICAL_FAULT &&
+            title == alarm.code.title &&
+            System.currentTimeMillis() - eversense.lastPositioningModeExitAt <= CRITICAL_FAULT_SUPPRESS_WINDOW_MS
+        if (isSpuriousPostExitFault) {
+            aapsLogger.info(LTag.BGSOURCE, "Suppressing CRITICAL_FAULT received shortly after exiting positioning mode")
+            return
         }
         val level = when {
             alarm.code.isWarning -> NotificationLevel.NORMAL
