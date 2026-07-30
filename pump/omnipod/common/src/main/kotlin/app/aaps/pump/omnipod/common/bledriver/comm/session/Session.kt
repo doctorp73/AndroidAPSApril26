@@ -15,6 +15,8 @@ import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageType
 import app.aaps.pump.omnipod.common.bledriver.comm.message.StringLengthPrefixEncoding
 import app.aaps.pump.omnipod.common.bledriver.comm.message.StringLengthPrefixEncoding.Companion.parseKeys
 import app.aaps.pump.omnipod.common.bledriver.pod.command.base.Command
+import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
+import app.aaps.pump.omnipod.common.bledriver.pod.response.NakResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.Response
 
 sealed class CommandSendResult
@@ -83,24 +85,23 @@ class Session(
 
         val response = parseResponse(decrypted)
 
-        /*if (!responseType.isInstance(response)) {
-            if (response is AlarmStatusResponse) {
-                throw PodAlarmException(response)
-            }
-            if (response is NakResponse) {
-                throw NakResponseException(response)
-            }
-            throw IllegalResponseException(responseType, response)
-        }
-
-         */
-
         sessionKeys.msgSequenceNumber++
         val ack = getAck(responseMsgPacket)
         aapsLogger.debug(LTag.PUMPBTCOMM, "Sending ACK: ${ack.payload.toHex()} in packet $ack")
         val sendResult = msgIO.sendMessage(ack)
         if (sendResult !is MessageSendSuccess) {
             return CommandAckError(response, "Could not ACK the response: $sendResult")
+        }
+        // A NAK or alarm-status response is a well-formed, successfully-decoded reply, but it means
+        // the pod rejected the command or is in a fault state - not that the command succeeded. Every
+        // call site downstream (O5PumpPlugin's bolus/TBR/basal-program/deactivate commands) discards
+        // the actual Response object via .ignoreElements().blockingAwait() and only distinguishes
+        // success from failure by whether that Completable throws, so without this check a
+        // pod-rejected command silently completed as if it had been accepted. Still ACK it above (the
+        // pod is waiting for acknowledgement of receipt regardless of what it sent) - only the
+        // reported outcome changes here.
+        if (response is NakResponse || response is AlarmStatusResponse) {
+            return CommandReceiveError("Pod rejected command or reported a fault: $response")
         }
         return CommandReceiveSuccess(response)
     }
