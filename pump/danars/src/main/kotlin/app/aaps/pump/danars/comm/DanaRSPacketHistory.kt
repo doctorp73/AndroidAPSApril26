@@ -71,12 +71,18 @@ abstract class DanaRSPacketHistory internal constructor(
             val dataSize = 1
             error = byteArrayToInt(getBytes(data, dataIndex, dataSize))
             done = true
+            // The pump's own terminal history-download packet carries this error code (already
+            // logged below as "Success: (error == 0x00)"), but it was never fed into `failed` -
+            // the only field DanaRSPacket.success() actually reads - so a pump-reported abort was
+            // silently reported to the caller as a successful history load.
+            failed = error != 0x00
             aapsLogger.debug(LTag.PUMPCOMM, "History end. Code: " + error + " Success: " + (error == 0x00))
         } else if (data.size == 5) {
             var dataIndex = DATA_START
             var dataSize = 1
             error = byteArrayToInt(getBytes(data, dataIndex, dataSize))
             done = true
+            failed = error != 0x00
             dataIndex += dataSize
             dataSize = 2
             totalCount = byteArrayToInt(getBytes(data, dataIndex, dataSize))
