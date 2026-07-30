@@ -324,7 +324,11 @@ class DanaRSService : DaggerService() {
         rxBus.send(EventPumpStatusChanged(rh.gs(R.string.gettingpumpstatus)))
         sendMessage(danaRSPacketGeneralInitialScreenInformation.get())
         danaPump.lastConnection = System.currentTimeMillis()
-        return pumpEnactResultProvider.get().success(msg.success())
+        // msg.success() only reflects whether the initial history-request packet was BLE-ACKed, not
+        // whether the wait loop above actually finished (it also exits on a 5min timeout or a mid-
+        // download disconnect via bleComm.isConnected). Report the real completion flag instead -
+        // mirrors AbstractDanaRExecutionService.loadHistory()'s fix for the same bug on classic DanaR.
+        return pumpEnactResultProvider.get().success(danaPump.historyDoneReceived)
     }
 
     fun setUserSettings(): PumpEnactResult {
