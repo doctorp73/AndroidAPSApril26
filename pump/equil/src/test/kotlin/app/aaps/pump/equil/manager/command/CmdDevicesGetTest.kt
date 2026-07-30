@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mock
+import org.mockito.kotlin.timeout
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -74,9 +75,15 @@ class CmdDevicesGetTest : TestBaseWithProfile() {
             cmd.decodeConfirmData(testData)
         }
         thread.start()
-        thread.join(1000)
 
-        verify(equilManager).setFirmwareVersion("1.5")
+        // A fixed thread.join(1000) races the background thread under system load (confirmed
+        // pre-existing and flaky: passes in isolation, fails intermittently under a full
+        // project-wide test run - unrelated to the upstream/dev merge). timeout() polls for
+        // the interaction instead of gambling on a fixed wait; the join() afterwards is now
+        // just draining an already-finished thread; cmdSuccess is set (in the same
+        // synchronized block, immediately after) by the time setFirmwareVersion is observed.
+        verify(equilManager, timeout(5000)).setFirmwareVersion("1.5")
+        thread.join(5000)
         assertTrue(cmd.cmdSuccess)
     }
 }
