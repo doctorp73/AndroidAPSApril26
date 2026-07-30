@@ -31,6 +31,18 @@
         android:label="@string/app_name"
         android:theme="@android:style/Theme.DeviceDefault">
 
+        <!-- androidx.wear.watchfacepush's own manifest declares this as required="true", which
+             blocks installation (INSTALL_FAILED_MISSING_SHARED_LIBRARY) on any watch older than
+             Wear OS 6 (API 36), regardless of minSdk or the runtime SDK-version guards already
+             around every watchfacepush call site. tools:overrideLibrary above only overrides the
+             minSdk merge conflict - this is the separate library-availability requirement, and
+             needs its own override so the app stays installable everywhere the feature is
+             correctly guarded to be a no-op. -->
+        <uses-library
+            android:name="wear-sdk"
+            android:required="false"
+            tools:node="replace" />
+
         <meta-data
             android:name="com.google.android.wearable.standalone"
             android:value="false" />
