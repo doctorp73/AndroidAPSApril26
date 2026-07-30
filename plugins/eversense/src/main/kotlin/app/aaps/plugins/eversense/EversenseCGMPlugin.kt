@@ -206,8 +206,17 @@ class EversenseCGMPlugin(
         EversenseLogger.info(TAG, "Diagnostic Mode ENABLED: Positioning active")
     }
 
+    // Set whenever we intentionally exit diagnostic/positioning mode. The transmitter reliably
+    // pushes a spurious CRITICAL_FAULT alarm ~1-2s after this transition (confirmed from device
+    // logs: signal/battery/calibration all healthy at the time, no other fault indication) -
+    // EversensePlugin.onAlarmReceived() uses this timestamp to suppress just that transient push
+    // without masking a CRITICAL_FAULT arriving at any other time.
+    @Volatile var lastPositioningModeExitAt: Long = 0L
+        private set
+
     fun exitPositioningMode() {
         isPositioningMode = false
+        lastPositioningModeExitAt = System.currentTimeMillis()
         setDiagnosticMode(false)
         EversenseLogger.info(TAG, "Diagnostic Mode DISABLED: Power saving active")
     }
