@@ -57,7 +57,10 @@ class CmdHistoryGet(
     override fun decodeConfirmData(data: ByteArray) {
 //        67631679050017070e101319
         //val index1 = data[4].toInt()
-        val year = data[6].toInt() and 0xff
+        // +2000: raw byte is years since 2000, matching EquilManager.decodeHistory()'s decode of the
+        // same field a few lines below (this.timestamp is debug-log-only via toString(), but should
+        // still show the real date rather than a ~2000-year-off one).
+        val year = (data[6].toInt() and 0xff) + 2000
         val month = data[7].toInt() and 0xff
         val day = data[8].toInt() and 0xff
         val hour = data[9].toInt() and 0xff
