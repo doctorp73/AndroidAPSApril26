@@ -108,6 +108,14 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
                 throw RileyLinkCommunicationException(RileyLinkBLEError.Interrupted, null)
             } else if (rfSpyResponse.wasNoResponseFromRileyLink()) {
                 throw RileyLinkCommunicationException(RileyLinkBLEError.NoResponse, null)
+            } else if (rfSpyResponse.isInvalidParam()) {
+                throw RileyLinkCommunicationException(RileyLinkBLEError.InvalidParam, null)
+            } else if (rfSpyResponse.isUnknownCommand()) {
+                throw RileyLinkCommunicationException(RileyLinkBLEError.UnknownCommand, null)
+            } else {
+                // response.isValid() was false but none of the known RileyLink failure flags matched -
+                // don't fall through and hand back an invalid/empty response as if it were a real one.
+                throw RileyLinkCommunicationException(RileyLinkBLEError.TooShortOrNullResponse, null)
             }
         }
 
@@ -151,8 +159,16 @@ abstract class RileyLinkCommunicationManager<T : RLMessage>(
             )
             aapsLogger.info(LTag.PUMPBTCOMM, "wakeup: raw response is " + shortHexString(resp?.raw))
 
-            // FIXME wakeUp successful !!!!!!!!!!!!!!!!!!
-            nextWakeUpRequired = System.currentTimeMillis() + (receiverDeviceAwakeForMinutes.toLong() * 60 * 1000)
+            // resp was never checked here - a null response (or a timeout/interrupted/no-response
+            // status) still pushed nextWakeUpRequired out as if the pump had actually woken up and
+            // replied, so a genuinely unreachable pump got treated as awake and the next real command
+            // skipped its own wake-up, timing out against a sleeping pump. Same failure-signal check
+            // already used in sendAndListen() for the same RFSpyResponse flags.
+            if (resp != null && !resp.wasTimeout() && !resp.wasInterrupted() && !resp.wasNoResponseFromRileyLink()) {
+                nextWakeUpRequired = System.currentTimeMillis() + (receiverDeviceAwakeForMinutes.toLong() * 60 * 1000)
+            } else {
+                aapsLogger.warn(LTag.PUMPBTCOMM, "wakeup: no valid response from pump, not marking as awake")
+            }
         } else {
             aapsLogger.debug(LTag.PUMPBTCOMM, "Last pump communication was recent, not waking pump.")
         }
