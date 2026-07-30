@@ -250,7 +250,15 @@ class O5OmnipodWizardViewModel @Inject constructor(
             }
 
             if (podStateManager.activationProgress == ActivationProgress.PRIMING) {
-                Thread.sleep((podStateManager.firstPrimeBolusVolume ?: 0).toLong() * 1000)
+                // firstPrimeBolusVolume is a PULSE count, not seconds (despite the name) - the command
+                // above tells the pod to wait primePulseRate eighths-of-a-second between each pulse via
+                // setDelayBetweenPulsesInEighthSeconds, so real elapsed time is pulses * rate/8 seconds,
+                // not pulses alone. Using pulses directly only happened to match when the rate was
+                // exactly 8 (1 pulse/sec); default to 8 here too so behavior is unchanged when the real
+                // rate is unavailable.
+                val pulses = podStateManager.firstPrimeBolusVolume ?: 0
+                val pulseRateEighthSeconds = podStateManager.primePulseRate ?: 8
+                Thread.sleep(pulses.toLong() * pulseRateEighthSeconds.toLong() * 1000 / 8)
             }
 
             if (podStateManager.activationProgress.isBefore(ActivationProgress.PRIME_COMPLETED)) {
@@ -326,7 +334,11 @@ class O5OmnipodWizardViewModel @Inject constructor(
             }
 
             if (podStateManager.activationProgress == ActivationProgress.INSERTING_CANNULA) {
-                Thread.sleep((podStateManager.secondPrimeBolusVolume ?: 0).toLong() * 1000)
+                // Same fix as the priming wait above: secondPrimeBolusVolume is a pulse count, real
+                // elapsed time is pulses * primePulseRate/8 seconds.
+                val pulses = podStateManager.secondPrimeBolusVolume ?: 0
+                val pulseRateEighthSeconds = podStateManager.primePulseRate ?: 8
+                Thread.sleep(pulses.toLong() * pulseRateEighthSeconds.toLong() * 1000 / 8)
             }
 
             if (podStateManager.activationProgress.isBefore(ActivationProgress.CANNULA_INSERTED)) {
