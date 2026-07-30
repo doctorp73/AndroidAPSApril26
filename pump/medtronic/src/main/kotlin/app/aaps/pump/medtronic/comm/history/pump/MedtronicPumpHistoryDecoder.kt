@@ -312,7 +312,9 @@ class MedtronicPumpHistoryDecoder @Inject constructor(
         var rate: Float? = null
         val index = entry.head[0].toInt()
         if (MedtronicDeviceType.isSameDevice(medtronicUtil.medtronicPumpModel, MedtronicDeviceType.Medtronic_523andHigher)) {
-            rate = body[1] * 0.025f
+            // body[1] is an unsigned stroke count (0.025 U/stroke) - un-masked, any rate >= 3.2 U/hr
+            // (stroke byte >= 128) sign-extends through Byte->Float promotion into a negative rate.
+            rate = ByteUtil.asUINT8(body[1]) * 0.025f
         }
 
         //LOG.info("Basal Profile Start: offset={}, rate={}, index={}, body_raw={}", offset, rate, index, body);
