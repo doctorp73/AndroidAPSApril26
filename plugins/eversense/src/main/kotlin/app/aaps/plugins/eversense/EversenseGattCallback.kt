@@ -526,12 +526,9 @@ class EversenseGattCallback(
             }
             return
         } else if (data.size >= 2 && data[0] == Eversense365Packets.NotificationResponseId && data[1] == Eversense365Packets.NotificationAlarmWithData) {
-            // Push alarm notification. Delegate to PushAlarmWithDataPacket instead of parsing
-            // inline: this used to read data[2] (the packet's documented "reserved" byte) as the
-            // alarm code instead of data[3] (the real alarm code, per the packet's own format
-            // comment) - an off-by-one that fed a meaningless byte into EversenseAlarm.from(),
-            // almost never matching a known code and posting a red "Unknown Error" alert for
-            // what was often a benign push (e.g. on leaving diagnostic/positioning mode).
+            // Push alarm notification. Delegate to PushAlarmWithDataPacket (see its own doc comment
+            // for the empirically-confirmed byte layout) instead of duplicating the parsing inline,
+            // matching how KeepAlivePacket is already handled a few lines above.
             val packet = PushAlarmWithDataPacket()
             packet.appendData(data.toUByteArray())
             val response = packet.parseResponse() ?: run {

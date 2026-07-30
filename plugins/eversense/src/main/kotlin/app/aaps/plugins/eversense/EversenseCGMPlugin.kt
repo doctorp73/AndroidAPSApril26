@@ -207,10 +207,11 @@ class EversenseCGMPlugin(
     }
 
     // Set whenever we intentionally exit diagnostic/positioning mode. The transmitter reliably
-    // pushes a spurious CRITICAL_FAULT alarm ~1-2s after this transition (confirmed from device
-    // logs: signal/battery/calibration all healthy at the time, no other fault indication) -
-    // EversensePlugin.onAlarmReceived() uses this timestamp to suppress just that transient push
-    // without masking a CRITICAL_FAULT arriving at any other time.
+    // pushes an alarm code with no EversenseAlarm mapping (-> UNKNOWN) ~1-2s after this transition
+    // (confirmed from device logs: signal/battery/calibration all healthy at the time - a
+    // mode-transition status push, not a real fault). EversensePlugin.onAlarmReceived() uses this
+    // timestamp to suppress just that transient push without masking a genuinely-unrecognized
+    // alarm arriving at any other time.
     @Volatile var lastPositioningModeExitAt: Long = 0L
         private set
 

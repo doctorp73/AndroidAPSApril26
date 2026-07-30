@@ -95,11 +95,12 @@ class EversensePlugin @Inject constructor(
 
     companion object {
 
-        // See onAlarmReceived()'s isSpuriousPostExitFault comment: the transmitter's spurious
-        // post-exit CRITICAL_FAULT arrives ~1-2s after exitPositioningMode() per device logs; this
-        // is a generous margin over that without being wide enough to risk masking an unrelated
-        // real fault that happens to follow shortly after someone closes the placement guide.
-        private const val CRITICAL_FAULT_SUPPRESS_WINDOW_MS = 5000L
+        // See onAlarmReceived()'s isSpuriousPostExitUnknown comment: the transmitter's unrecognized
+        // post-exit status push arrives ~1-2s after exitPositioningMode() per device logs; this is a
+        // generous margin over that without being wide enough to risk masking an unrelated
+        // genuinely-unrecognized alarm that happens to follow shortly after someone closes the
+        // placement guide.
+        private const val POST_EXIT_UNKNOWN_ALARM_SUPPRESS_WINDOW_MS = 5000L
     }
 
     @Inject lateinit var persistenceLayer: PersistenceLayer
@@ -453,16 +454,16 @@ class EversensePlugin @Inject constructor(
         } else {
             alarm.code.title
         }
-        // The transmitter reliably pushes a spurious, ambiguous CRITICAL_FAULT within ~1-2s of us
-        // exiting diagnostic/positioning mode (confirmed from device logs: signal/battery/
-        // calibration all healthy at the time). Only suppress the generic "Transmitter Error" case
-        // above, not a title that got reinterpreted as a genuine calibration-due alarm, and only
-        // within a narrow window - a CRITICAL_FAULT at any other time still alerts normally.
-        val isSpuriousPostExitFault = alarm.code == EversenseAlarm.CRITICAL_FAULT &&
-            title == alarm.code.title &&
-            System.currentTimeMillis() - eversense.lastPositioningModeExitAt <= CRITICAL_FAULT_SUPPRESS_WINDOW_MS
-        if (isSpuriousPostExitFault) {
-            aapsLogger.info(LTag.BGSOURCE, "Suppressing CRITICAL_FAULT received shortly after exiting positioning mode")
+        // The transmitter pushes an alarm code with no EversenseAlarm mapping (-> UNKNOWN) within
+        // ~1-2s of us exiting diagnostic/positioning mode (confirmed from device logs: signal/
+        // battery/calibration all healthy at the time - this is a mode-transition status push, not
+        // a real fault). Only suppress within that narrow window, so a genuinely unrecognized alarm
+        // arriving at any other time still surfaces as "Unknown Error" rather than being silently
+        // dropped.
+        val isSpuriousPostExitUnknown = alarm.code == EversenseAlarm.UNKNOWN &&
+            System.currentTimeMillis() - eversense.lastPositioningModeExitAt <= POST_EXIT_UNKNOWN_ALARM_SUPPRESS_WINDOW_MS
+        if (isSpuriousPostExitUnknown) {
+            aapsLogger.info(LTag.BGSOURCE, "Suppressing unrecognized alarm (code ${alarm.codeRaw}) received shortly after exiting positioning mode")
             return
         }
         val level = when {
