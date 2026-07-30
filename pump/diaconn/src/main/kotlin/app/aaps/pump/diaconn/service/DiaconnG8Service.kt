@@ -348,6 +348,10 @@ class DiaconnG8Service : DaggerService() {
         aapsLogger.debug(LTag.PUMPCOMM, "loopinfo start : $start, end : $end, loopSize : $loopSize")
         // log sync start!
         if (loopSize > 0) {
+            // sendMessage() is fire-and-forget (no return status), so per-page failures (a defect/error
+            // result, or a mid-download disconnect leaving no response at all) are only observable via
+            // this flag, set by BigLogInquireResponsePacket.handleMessage() on the actual response.
+            diaconnG8Pump.historyLogPageFailed = false
             for (i in 0 until loopSize) {
                 val startLogNo: Int = start + i * pumpLogPageSize
                 val endLogNo: Int = startLogNo + min(end - startLogNo, pumpLogPageSize)
@@ -355,7 +359,7 @@ class DiaconnG8Service : DaggerService() {
                 val msg = BigLogInquirePacket(injector, startLogNo, endLogNo, 100)
                 sendMessage(msg, 2000)
             }
-            result.success(true)
+            result.success(!diaconnG8Pump.historyLogPageFailed)
             diaconnG8Pump.lastConnection = System.currentTimeMillis()
         }
         // upload pump log to Diaconn Cloud
