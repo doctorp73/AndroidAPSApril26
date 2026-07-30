@@ -62,7 +62,7 @@ internal class AfrezzaDoseMappingTest {
 
     private val afrezzaCfg = ICfg(
         insulinLabel = "Afrezza (Inhaled)",
-        peak = 40,
+        peak = 15,
         dia = 2.5,
         concentration = 1.0
     )
