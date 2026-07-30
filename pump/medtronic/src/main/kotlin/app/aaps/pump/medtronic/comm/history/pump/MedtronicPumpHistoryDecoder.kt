@@ -309,16 +309,20 @@ class MedtronicPumpHistoryDecoder @Inject constructor(
     private fun decodeBasalProfileStart(entry: PumpHistoryEntry): RecordDecodeStatus {
         val body = entry.body
         val offset = body[0] * 1000 * 30 * 60
-        var rate: Float? = null
         val index = entry.head[0].toInt()
-        if (MedtronicDeviceType.isSameDevice(medtronicUtil.medtronicPumpModel, MedtronicDeviceType.Medtronic_523andHigher)) {
-            // body[1] is an unsigned stroke count (0.025 U/stroke) - un-masked, any rate >= 3.2 U/hr
-            // (stroke byte >= 128) sign-extends through Byte->Float promotion into a negative rate.
-            rate = ByteUtil.asUINT8(body[1]) * 0.025f
-        }
+        // body[1] is an unsigned stroke count (0.025 U/stroke, the standard basal stroke size across
+        // this whole pump family) - un-masked, any rate >= 3.2 U/hr (stroke byte >= 128) sign-extends
+        // through Byte->Float promotion into a negative rate. This used to only be computed for the
+        // Medtronic_523andHigher family; unlike decodeBolusWizard512 (a genuinely separate function
+        // for a body layout that really does differ by pump generation), BasalProfileStart has no such
+        // per-model variant or alternate dispatch entry, so gating it by device type just made this
+        // function's success path unreachable - and BasalProfileStart decode failures silently drop
+        // those entries from MedtronicHistoryData, which isPumpSuspended() reads to decide the pump's
+        // actual Suspended/Ready driver state - for every pre-523 model (512/712/515/715/522/722).
+        val rate: Float = ByteUtil.asUINT8(body[1]) * 0.025f
 
         //LOG.info("Basal Profile Start: offset={}, rate={}, index={}, body_raw={}", offset, rate, index, body);
-        return if (rate == null) {
+        return if (rate < 0) {
             aapsLogger.warn(LTag.PUMPBTCOMM, String.format(Locale.ENGLISH, "Basal Profile Start (ERROR): offset=%d, rate=%.3f, index=%d, body_raw=%s", offset, rate, index, ByteUtil.getHex(body)))
             RecordDecodeStatus.Error
         } else {
@@ -336,29 +340,31 @@ class MedtronicPumpHistoryDecoder @Inject constructor(
             // https://github.com/ps2/minimed_rf/blob/master/lib/minimed_rf/log_entries/bolus_wizard.rb#L102
             bolusStrokes = 40.0f
             dto.carbs = ((body[1] and 0x0c.toByte()).toInt() shl 6) + ByteUtil.asUINT8(body[0])
-            dto.bloodGlucose = ((body[1] and 0x03).toInt() shl 8) + entry.head[0]
+            dto.bloodGlucose = ((body[1] and 0x03).toInt() shl 8) + ByteUtil.asUINT8(entry.head[0])
             dto.carbRatio = body[1] / 10.0f
             // carb_ratio (?) = (((self.body[2] & 0x07) << 8) + self.body[3]) /
             // 10.0s
             dto.insulinSensitivity = body[4].toFloat()
             dto.bgTargetLow = ByteUtil.asUINT8(body[5])
             dto.bgTargetHigh = ByteUtil.asUINT8(body[14])
-            dto.correctionEstimate = (((body[9] and 0x38).toInt() shl 5) + body[6]) / bolusStrokes
-            dto.foodEstimate = ((body[7].toInt() shl 8) + body[8]) / bolusStrokes
-            dto.unabsorbedInsulin = ((body[10].toInt() shl 8) + body[11]) / bolusStrokes
-            dto.bolusTotal = ((body[12].toInt() shl 8) + body[13]) / bolusStrokes
+            dto.correctionEstimate = (((body[9] and 0x38).toInt() shl 5) + ByteUtil.asUINT8(body[6])) / bolusStrokes
+            dto.foodEstimate = ByteUtil.toInt(body[7], body[8]) / bolusStrokes
+            dto.unabsorbedInsulin = ByteUtil.toInt(body[10], body[11]) / bolusStrokes
+            dto.bolusTotal = ByteUtil.toInt(body[12], body[13]) / bolusStrokes
         } else {
-            dto.bloodGlucose = (body[1] and 0x0F).toInt() shl 8 or entry.head[0].toInt()
+            // entry.head[0] combined via `or` (not `+`) here - a sign-extended negative byte would
+            // have smeared 1-bits through the whole 32-bit int, not just gone negative.
+            dto.bloodGlucose = (body[1] and 0x0F).toInt() shl 8 or ByteUtil.asUINT8(entry.head[0])
             dto.carbs = ByteUtil.asUINT8(body[0])
             dto.carbRatio = body[2].toFloat()
             dto.insulinSensitivity = body[3].toFloat()
             dto.bgTargetLow = ByteUtil.asUINT8(body[4])
             dto.bgTargetHigh = ByteUtil.asUINT8(body[12])
-            dto.bolusTotal = body[11] / bolusStrokes
-            dto.foodEstimate = body[6] / bolusStrokes
-            dto.unabsorbedInsulin = body[9] / bolusStrokes
-            dto.bolusTotal = body[11] / bolusStrokes
-            dto.correctionEstimate = (body[7] + (body[5] and 0x0F)) / bolusStrokes
+            dto.bolusTotal = ByteUtil.asUINT8(body[11]) / bolusStrokes
+            dto.foodEstimate = ByteUtil.asUINT8(body[6]) / bolusStrokes
+            dto.unabsorbedInsulin = ByteUtil.asUINT8(body[9]) / bolusStrokes
+            dto.bolusTotal = ByteUtil.asUINT8(body[11]) / bolusStrokes
+            dto.correctionEstimate = (ByteUtil.asUINT8(body[7]) + (body[5] and 0x0F)) / bolusStrokes
         }
         if (dto.bloodGlucose < 0) {
             dto.bloodGlucose = ByteUtil.convertUnsignedByteToInt(dto.bloodGlucose.toByte())
@@ -373,15 +379,15 @@ class MedtronicPumpHistoryDecoder @Inject constructor(
         val body = entry.body
         val dto = BolusWizardDTO()
         val bolusStrokes = 10.0f
-        dto.bloodGlucose = (body.get(1) and 0x03).toInt() shl 8 or entry.head.get(0).toInt()
+        dto.bloodGlucose = (body.get(1) and 0x03).toInt() shl 8 or ByteUtil.asUINT8(entry.head.get(0))
         dto.carbs = body.get(1).toInt() and 0xC shl 6 or ByteUtil.asUINT8(body.get(0))
         dto.carbRatio = body.get(2).toFloat()
         dto.insulinSensitivity = body.get(3).toFloat()
         dto.bgTargetLow = ByteUtil.asUINT8(body.get(4))
-        dto.foodEstimate = body.get(6) / 10.0f
-        dto.correctionEstimate = (body.get(7) + (body.get(5) and 0x0F)) / bolusStrokes
-        dto.unabsorbedInsulin = body.get(9) / bolusStrokes
-        dto.bolusTotal = body.get(11) / bolusStrokes
+        dto.foodEstimate = ByteUtil.asUINT8(body.get(6)) / 10.0f
+        dto.correctionEstimate = (ByteUtil.asUINT8(body.get(7)) + (body.get(5) and 0x0F)) / bolusStrokes
+        dto.unabsorbedInsulin = ByteUtil.asUINT8(body.get(9)) / bolusStrokes
+        dto.bolusTotal = ByteUtil.asUINT8(body.get(11)) / bolusStrokes
         dto.bgTargetHigh = dto.bgTargetLow
         if (dto.bloodGlucose < 0) {
             dto.bloodGlucose = ByteUtil.convertUnsignedByteToInt(dto.bloodGlucose.toByte())
