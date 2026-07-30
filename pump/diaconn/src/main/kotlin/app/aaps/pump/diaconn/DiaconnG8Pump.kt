@@ -55,6 +55,12 @@ class DiaconnG8Pump @Inject constructor(
     var lastSettingsRead: Long = 0
     var mealLimitTime: Int = 0
 
+    // Set by BigLogInquireResponsePacket.handleMessage() when a history-log page request fails
+    // (defect/error result or a disconnect leaving no response at all). DiaconnG8Service.loadHistory()
+    // clears this before its per-page request loop and checks it afterward, since sendMessage() itself
+    // is fire-and-forget and doesn't surface per-page success/failure.
+    var historyLogPageFailed: Boolean = false
+
     // time
     private var pumpTime: Long = 0
 
