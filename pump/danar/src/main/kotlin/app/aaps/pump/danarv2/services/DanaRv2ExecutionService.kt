@@ -326,7 +326,10 @@ class DanaRv2ExecutionService : AbstractDanaRExecutionService() {
         SystemClock.sleep(200)
         if (danaPump.lastEventTimeLoaded != 0L) danaPump.readHistoryFrom = danaPump.lastEventTimeLoaded - mins(1).msecs() else danaPump.readHistoryFrom = 0
         danaPump.lastConnection = System.currentTimeMillis()
-        return pumpEnactResultProvider.get().success(true)
+        // The wait loop above also exits on a mid-download socket disconnect (mRfcommSocket?.isConnected
+        // going false), so completion is NOT guaranteed. Report the actual state - same bug already
+        // fixed in AbstractDanaRExecutionService.loadHistory() and DanaRSService.loadEvents().
+        return pumpEnactResultProvider.get().success(danaPump.historyDoneReceived)
     }
 
     override suspend fun updateBasalsInPump(profile: Profile): Boolean {
