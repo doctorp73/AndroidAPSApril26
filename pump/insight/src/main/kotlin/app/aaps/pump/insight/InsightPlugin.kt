@@ -713,13 +713,18 @@ class InsightPlugin @Inject constructor(
                 val message = ChangeTBRMessage()
                 message.duration = durationInMinutes
                 message.percentage = percentage
-                connectionService?.requestMessage(message)
+                connectionService?.requestMessage(message)?.await()
             } else {
                 val message = SetTBRMessage()
                 message.duration = durationInMinutes
                 message.percentage = percentage
-                connectionService?.requestMessage(message)
+                connectionService?.requestMessage(message)?.await()
             }
+            // await() above throws (caught below) if the pump rejects the TBR; only reachable here
+            // once the pump has actually confirmed it. Every sibling command (cancelTempBasalOnly,
+            // setExtendedBolusOnly, deliverTreatment, ...) awaits its request the same way - this one
+            // previously discarded the request object and reported success right after *enqueuing*
+            // the command, with no way to observe a pump-side rejection.
             result.isPercent(true)
                 .percent(percentage)
                 .duration(durationInMinutes)
