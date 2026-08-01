@@ -6,15 +6,19 @@ import app.aaps.core.utils.toHex
 import app.aaps.pump.omnipod.common.bledriver.comm.Ids
 import app.aaps.pump.omnipod.common.bledriver.comm.endecrypt.EnDecrypt
 import app.aaps.pump.omnipod.common.bledriver.comm.exceptions.CouldNotParseResponseException
+import app.aaps.pump.omnipod.common.bledriver.comm.exceptions.MessageIOException
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageIO
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessagePacket
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageSendErrorConfirming
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageSendErrorSending
+import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageSendResult
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageSendSuccess
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageType
 import app.aaps.pump.omnipod.common.bledriver.comm.message.StringLengthPrefixEncoding
 import app.aaps.pump.omnipod.common.bledriver.comm.message.StringLengthPrefixEncoding.Companion.parseKeys
+import app.aaps.pump.omnipod.common.bledriver.comm.pair.O5CertificateStore
 import app.aaps.pump.omnipod.common.bledriver.pod.command.base.Command
+import app.aaps.pump.omnipod.common.bledriver.pod.command.base.CommandType
 import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.NakResponse
 import app.aaps.pump.omnipod.common.bledriver.pod.response.Response
@@ -36,7 +40,12 @@ class Session(
     private val msgIO: MessageIO,
     private val ids: Ids,
     val sessionKeys: SessionKeys,
-    val enDecrypt: EnDecrypt
+    val enDecrypt: EnDecrypt,
+    /** Non-null only for O5 connections (see [app.aaps.pump.omnipod.common.bledriver.comm
+     *  .legacy.session.O5Connection.establishSession]) - Dash has no certificate/ECDSA
+     *  pairing infrastructure and never signs commands, so its `Connection
+     *  .establishSession` leaves this at its default null. */
+    private val commandSigner: O5CertificateStore? = null
 ) {
 
     fun sendCommand(cmd: Command): CommandSendResult {
@@ -158,8 +167,9 @@ class Session(
 
         aapsLogger.debug(LTag.PUMPBTCOMM, "Sending command: ${wrapped.toHex()}")
 
+        val needsSigning = commandSigner != null && cmd.commandType in SIGNED_COMMAND_TYPES
         val msg = MessagePacket(
-            type = MessageType.ENCRYPTED,
+            type = if (needsSigning) MessageType.ENCRYPTED_SIGNED else MessageType.ENCRYPTED,
             sequenceNumber = sessionKeys.msgSequenceNumber,
             source = ids.myId,
             destination = ids.podId,
@@ -167,7 +177,95 @@ class Session(
             eqos = 1
         )
 
-        return enDecrypt.encrypt(msg)
+        val encrypted = enDecrypt.encrypt(msg)
+        return if (needsSigning) sign(encrypted) else encrypted
+    }
+
+    /**
+     * Appends a raw (r||s, 64-byte) P-256 ECDSA signature to an already AES-CCM-encrypted
+     * O5 command - confirmed against OmnipodKit's BleMessageTransport.swift getCmdMessage():
+     * real O5 pod firmware rejects insulin-schedule/deactivate/cancel-delivery commands
+     * (this codebase's [CommandType.PROGRAM_BASAL]/[CommandType.PROGRAM_TEMP_BASAL]/
+     * [CommandType.PROGRAM_BOLUS]/[CommandType.PROGRAM_INSULIN]/[CommandType.DEACTIVATE]/
+     * [CommandType.STOP_DELIVERY] - the first four always embed a
+     * [app.aaps.pump.omnipod.common.bledriver.pod.command.ProgramInsulinCommand] interlock
+     * block, which is why the Swift original's block-list check treats them the same as a
+     * standalone [CommandType.PROGRAM_INSULIN]) without this signature, even though every
+     * other command type is accepted unsigned. The signed byte range is the 16-byte AAD
+     * header plus the ciphertext+tag - i.e. everything [enDecrypt]'s AES-CCM authenticates,
+     * signed on top for an extra pod-side check that the command really came from the
+     * paired controller identity. Matches [EnDecrypt.decrypt]'s own AAD extraction
+     * (`asByteArray().copyOfRange(0, 16)`), so a receiver reconstructing this input from the
+     * wire bytes gets byte-identical input to what was signed here.
+     */
+    private fun sign(encrypted: MessagePacket): MessagePacket {
+        val aad = encrypted.asByteArray(forEncryption = false).copyOfRange(0, 16)
+        val signature = requireNotNull(commandSigner) { "sign() called without a commandSigner" }
+            .signRaw(aad + encrypted.payload)
+        return encrypted.copy(signatureData = signature)
+    }
+
+    /**
+     * Sends a raw O5 "AID setup" command payload (see [app.aaps.pump.omnipod.common
+     * .bledriver.pod.command.aid.O5AidSetupCommands]) and returns the decrypted response
+     * with [expectedResponsePrefix] stripped. Distinct from [sendCommand]/
+     * [readAndAckResponse]: AID setup commands use a plain ASCII `key=value` wire format,
+     * not the `"S0.0=...,G0.0"` SLPE envelope [getCmdMessage] builds for ordinary
+     * [Command]s, and their responses aren't the binary [app.aaps.pump.omnipod.common
+     * .bledriver.pod.response.ResponseUtil] envelope either - just an ASCII prefix
+     * followed by raw bytes. Always sent as plain [MessageType.ENCRYPTED], never signed -
+     * confirmed against OmnipodKit's own sendO5AidCommand(), which never takes the
+     * Type-4-signing path (only the commands [sign] handles do). Throws on any protocol
+     * failure rather than returning a result type, matching the reference's
+     * o5SendAidSetupCommands(): any failure here must abort pod activation outright rather
+     * than silently continuing with a pod that never received this data.
+     */
+    @Suppress("ThrowsCount")
+    fun sendAidSetupCommand(payload: ByteArray, expectedResponsePrefix: String): ByteArray {
+        sessionKeys.msgSequenceNumber++
+        val msg = MessagePacket(
+            type = MessageType.ENCRYPTED,
+            sequenceNumber = sessionKeys.msgSequenceNumber,
+            source = ids.myId,
+            destination = ids.podId,
+            payload = payload,
+            eqos = 1
+        )
+        val encrypted = enDecrypt.encrypt(msg)
+
+        var sendResult: MessageSendResult = MessageSendErrorSending("AID setup command not sent")
+        for (i in 0..MAX_TRIES) {
+            sendResult = msgIO.sendMessage(encrypted)
+            if (sendResult is MessageSendSuccess) break
+        }
+        if (sendResult !is MessageSendSuccess) {
+            throw MessageIOException("Could not send AID setup command: $sendResult")
+        }
+
+        var responseMsgPacket: MessagePacket? = null
+        for (i in 0..MAX_TRIES) {
+            responseMsgPacket = msgIO.receiveMessage()
+            if (responseMsgPacket != null) break
+        }
+        val received = responseMsgPacket ?: throw MessageIOException("Could not read AID setup response")
+
+        val decrypted = enDecrypt.decrypt(received)
+        sessionKeys.msgSequenceNumber++
+        val ack = getAck(received)
+        val ackResult = msgIO.sendMessage(ack)
+        if (ackResult !is MessageSendSuccess) {
+            throw MessageIOException("Could not ACK AID setup response: $ackResult")
+        }
+
+        val prefixBytes = expectedResponsePrefix.toByteArray(Charsets.US_ASCII)
+        if (decrypted.payload.size < prefixBytes.size ||
+            !decrypted.payload.copyOfRange(0, prefixBytes.size).contentEquals(prefixBytes)
+        ) {
+            throw MessageIOException(
+                "AID setup response missing expected prefix '$expectedResponsePrefix': ${decrypted.payload.toHex()}"
+            )
+        }
+        return decrypted.payload.copyOfRange(prefixBytes.size, decrypted.payload.size)
     }
 
     companion object {
@@ -180,5 +278,22 @@ class Session(
         private const val RESPONSE_ENVELOPE_MIN_SIZE = 8
 
         private const val MAX_TRIES = 4
+
+        /**
+         * O5-only command types that real pod firmware rejects unless sent as
+         * [MessageType.ENCRYPTED_SIGNED] - see [sign]'s doc comment for why
+         * [CommandType.PROGRAM_BASAL]/[CommandType.PROGRAM_TEMP_BASAL]/
+         * [CommandType.PROGRAM_BOLUS] are included alongside the standalone
+         * [CommandType.PROGRAM_INSULIN]/[CommandType.DEACTIVATE]/[CommandType.STOP_DELIVERY]
+         * types the Swift reference's own block-list check names directly.
+         */
+        private val SIGNED_COMMAND_TYPES = setOf(
+            CommandType.PROGRAM_BASAL,
+            CommandType.PROGRAM_TEMP_BASAL,
+            CommandType.PROGRAM_BOLUS,
+            CommandType.PROGRAM_INSULIN,
+            CommandType.DEACTIVATE,
+            CommandType.STOP_DELIVERY
+        )
     }
 }

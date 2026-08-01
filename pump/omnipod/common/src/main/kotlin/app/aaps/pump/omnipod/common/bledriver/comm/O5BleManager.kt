@@ -5,6 +5,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.session.ConnectionState
 import app.aaps.pump.omnipod.common.bledriver.event.PodEvent
 import app.aaps.pump.omnipod.common.bledriver.pod.command.base.Command
 import app.aaps.pump.omnipod.common.bledriver.pod.response.Response
+import io.reactivex.rxjava3.core.Completable
 import io.reactivex.rxjava3.core.Observable
 import java.util.concurrent.CountDownLatch
 import kotlin.reflect.KClass
@@ -28,6 +29,12 @@ interface O5BleManager {
     fun connect(stopConnectionLatch: CountDownLatch): Observable<PodEvent>
 
     fun pairNewPod(): Observable<PodEvent>
+
+    /** Sends the O5-only AID setup command batch (see [app.aaps.pump.omnipod.common
+     *  .bledriver.pod.command.aid.O5AidSetupCommands]) over the already-established
+     *  session. Must be called after [pairNewPod] completes and before any other
+     *  activation command - see that object's class doc for why. */
+    fun sendAidSetupCommands(): Completable
 
     fun disconnect(closeGatt: Boolean = false)
     fun removeBond()

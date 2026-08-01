@@ -27,6 +27,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.legacy.io.DataBleIO
 import app.aaps.pump.omnipod.common.bledriver.comm.legacy.io.IncomingPackets
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageIO
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.BlePacketLayout
+import app.aaps.pump.omnipod.common.bledriver.comm.pair.O5CertificateStore
 import app.aaps.pump.omnipod.common.bledriver.comm.session.Connected
 import app.aaps.pump.omnipod.common.bledriver.comm.session.ConnectionState
 import app.aaps.pump.omnipod.common.bledriver.comm.session.ConnectionWaitCondition
@@ -41,6 +42,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.session.SessionNegotiationRes
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodType
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
 import app.aaps.pump.omnipod.common.bledriver.pod.util.BluetoothServiceUuids
+import app.aaps.pump.omnipod.common.bledriver.pod.util.P256KeyGenerator
 import java.util.UUID
 
 /**
@@ -61,7 +63,8 @@ class O5Connection(
     private val aapsLogger: AAPSLogger,
     private val config: Config,
     private val context: Context,
-    private val podState: O5PodStateManager
+    private val podState: O5PodStateManager,
+    private val p256KeyGenerator: P256KeyGenerator
 ) : BleConnection, DisconnectHandler {
 
     private val incomingPackets = IncomingPackets()
@@ -292,7 +295,15 @@ class O5Connection(
                     aapsLogger.info(LTag.PUMPCOMM, "Nonce (O5): ${keys.nonce}")
                 }
                 val enDecrypt = EnDecrypt(aapsLogger, keys.nonce, keys.ck)
-                session = Session(aapsLogger, mIO, ids, sessionKeys = keys, enDecrypt = enDecrypt)
+                // Real O5 pod firmware rejects certain dose-affecting commands unless
+                // Type-4-signed (see Session.sign()'s doc comment) - reuse the same
+                // certificate/keypair pairing already validated for this controller id,
+                // rather than a separate signing-only code path.
+                val controllerId = requireNotNull(podState.controllerId) {
+                    "Missing controllerId, cannot establish a signed O5 session"
+                }
+                val certStore = O5CertificateStore(aapsLogger, p256KeyGenerator, controllerId)
+                session = Session(aapsLogger, mIO, ids, sessionKeys = keys, enDecrypt = enDecrypt, commandSigner = certStore)
                 null
             }
         }

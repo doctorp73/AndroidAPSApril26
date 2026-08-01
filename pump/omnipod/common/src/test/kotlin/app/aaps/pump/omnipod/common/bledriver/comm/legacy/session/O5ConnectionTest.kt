@@ -19,6 +19,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.session.Connected
 import app.aaps.pump.omnipod.common.bledriver.comm.session.ConnectionWaitCondition
 import app.aaps.pump.omnipod.common.bledriver.comm.session.NotConnected
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
+import app.aaps.pump.omnipod.common.bledriver.pod.util.P256KeyGenerator
 import app.aaps.shared.tests.AAPSLoggerTest
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -59,11 +60,12 @@ class O5ConnectionTest {
     private val podState = mock<O5PodStateManager>()
     private val podDevice = mock<BluetoothDevice>()
     private val bluetoothManager = mock<BluetoothManager>()
+    private val p256KeyGenerator = mock<P256KeyGenerator>()
 
     private fun newConnection(bluetoothServiceAvailable: Boolean = true): O5Connection {
         whenever(context.getSystemService(Context.BLUETOOTH_SERVICE))
             .thenReturn(if (bluetoothServiceAvailable) bluetoothManager else null)
-        return O5Connection(podDevice, aapsLogger, config, context, podState)
+        return O5Connection(podDevice, aapsLogger, config, context, podState, p256KeyGenerator)
     }
 
     // ---- connectionState() --------------------------------------------------------------

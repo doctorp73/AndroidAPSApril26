@@ -26,11 +26,18 @@ data class MessagePacket(
     // implementation itself. No wire trace or spec has surfaced what sas/tfs actually mean.
     val sas: Boolean = true,
     val tfs: Boolean = false,
-    val version: Short = 0.toShort()
+    val version: Short = 0.toShort(),
+    /** O5-only: raw (r||s, 64-byte) P-256 ECDSA signature for [MessageType.ENCRYPTED_SIGNED]
+     *  messages - set only after [payload] has already been AES-CCM encrypted (see
+     *  [app.aaps.pump.omnipod.common.bledriver.comm.session.Session]'s signing step).
+     *  Appended to the wire bytes after [payload] but - matching OmnipodKit's
+     *  MessagePacket.swift exactly - deliberately excluded from the size field computed
+     *  in [asByteArray], since the pod doesn't count it as part of the message body. */
+    val signatureData: ByteArray? = null
 ) {
 
     fun asByteArray(forEncryption: Boolean = false): ByteArray {
-        val bb = ByteBuffer.allocate(16 + payload.size)
+        val bb = ByteBuffer.allocate(16 + payload.size + (signatureData?.size ?: 0))
         bb.put(MAGIC_PATTERN.toByteArray())
 
         val f1 = Flag()
@@ -67,6 +74,7 @@ data class MessagePacket(
         bb.put(this.destination.address)
 
         bb.put(this.payload)
+        signatureData?.let { bb.put(it) }
 
         val ret = ByteArray(bb.position())
         bb.flip()

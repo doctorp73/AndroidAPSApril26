@@ -169,6 +169,11 @@ class O5OmnipodWizardViewModel @Inject constructor(
                 bleManager.pairNewPod().ignoreElements().blockingAwait()
             }
 
+            if (podStateManager.activationProgress.isBefore(ActivationProgress.AID_SETUP)) {
+                bleManager.sendAidSetupCommands().blockingAwait()
+                podStateManager.activationProgress = ActivationProgress.AID_SETUP
+            }
+
             if (podStateManager.activationProgress.isBefore(ActivationProgress.GOT_POD_VERSION)) {
                 val cmd = GetVersionCommand.Builder()
                     .setUniqueId(GetVersionCommand.DEFAULT_UNIQUE_ID)
