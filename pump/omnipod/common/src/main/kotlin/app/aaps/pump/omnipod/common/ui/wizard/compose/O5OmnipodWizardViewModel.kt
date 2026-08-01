@@ -169,11 +169,6 @@ class O5OmnipodWizardViewModel @Inject constructor(
                 bleManager.pairNewPod().ignoreElements().blockingAwait()
             }
 
-            if (podStateManager.activationProgress.isBefore(ActivationProgress.AID_SETUP)) {
-                bleManager.sendAidSetupCommands().blockingAwait()
-                podStateManager.activationProgress = ActivationProgress.AID_SETUP
-            }
-
             if (podStateManager.activationProgress.isBefore(ActivationProgress.GOT_POD_VERSION)) {
                 val cmd = GetVersionCommand.Builder()
                     .setUniqueId(GetVersionCommand.DEFAULT_UNIQUE_ID)
@@ -181,6 +176,13 @@ class O5OmnipodWizardViewModel @Inject constructor(
                     .build()
                 bleManager.sendCommand(cmd, VersionResponse::class).ignoreElements().blockingAwait()
                 podStateManager.activationProgress = ActivationProgress.GOT_POD_VERSION
+            }
+
+            // Must run after GOT_POD_VERSION, not before - confirmed against OmnipodKit's
+            // BlePodComms.swift, see ActivationProgress.AID_SETUP's doc comment for why.
+            if (podStateManager.activationProgress.isBefore(ActivationProgress.AID_SETUP)) {
+                bleManager.sendAidSetupCommands().blockingAwait()
+                podStateManager.activationProgress = ActivationProgress.AID_SETUP
             }
 
             if (podStateManager.activationProgress.isBefore(ActivationProgress.SET_UNIQUE_ID)) {
