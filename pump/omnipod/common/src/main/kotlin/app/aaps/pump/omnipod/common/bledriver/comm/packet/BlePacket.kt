@@ -31,7 +31,7 @@ data class FirstBlePacket(
         bb.put(payload)
 
         val pos = bb.position()
-        val ret = ByteArray(layout.maxPayloadSize)
+        val ret = ByteArray(if (layout.padToMaxPayloadSize) layout.maxPayloadSize else pos)
         bb.flip()
         bb.get(ret, 0, pos)
 
@@ -120,7 +120,7 @@ data class LastBlePacket(
             .putInt(crc32.toInt())
             .put(payload)
         val pos = bb.position()
-        val ret = ByteArray(layout.maxPayloadSize)
+        val ret = ByteArray(if (layout.padToMaxPayloadSize) layout.maxPayloadSize else pos)
         bb.flip()
         bb.get(ret, 0, pos)
         return ret
@@ -157,7 +157,8 @@ data class LastOptionalPlusOneBlePacket(
 ) : BlePacket() {
 
     override fun toByteArray(layout: BlePacketLayout): ByteArray {
-        return byteArrayOf(index, size) + payload + ByteArray(layout.maxPayloadSize - payload.size - 2)
+        val exact = byteArrayOf(index, size) + payload
+        return if (layout.padToMaxPayloadSize) exact + ByteArray(layout.maxPayloadSize - exact.size) else exact
     }
 
     companion object {

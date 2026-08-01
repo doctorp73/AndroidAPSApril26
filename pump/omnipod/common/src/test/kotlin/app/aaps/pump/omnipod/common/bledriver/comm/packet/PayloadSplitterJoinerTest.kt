@@ -92,6 +92,49 @@ class PayloadSplitterJoinerTest : TestBase() {
         assertThat(parsed.payload).isEqualTo(payload)
     }
 
+    // -- padToMaxPayloadSize: O5 must write exact-length packets like OmnipodKit does ------
+    // See BlePacketLayout.padToMaxPayloadSize's doc comment for why Dash keeps padding.
+
+    @Test
+    fun `O5 packets are written at their exact length, not padded to the 244-byte MTU`() {
+        // 44 bytes is the real size of the SP1+SP2 pairing message seen in device logs; it
+        // was going out as a 244-byte BLE write with 193 bytes of zero padding.
+        val payload = payloadOf(44, seed = 7)
+
+        val packets = PayloadSplitter(payload, BlePacketLayout.OMNIPOD_5).splitInPackets()
+        val encoded = packets.single().toByteArray(BlePacketLayout.OMNIPOD_5)
+
+        // 7-byte header (index, fragments, crc32, size) + 44-byte payload.
+        assertThat(encoded.size).isEqualTo(51)
+    }
+
+    @Test
+    fun `O5 multi-packet messages pad no packet, including the last`() {
+        // ~642 bytes is the SPS2.1 certificate message - the multi-packet path, which has
+        // never yet run against real hardware.
+        val payload = payloadOf(642, seed = 8)
+
+        val packets = PayloadSplitter(payload, BlePacketLayout.OMNIPOD_5).splitInPackets()
+        val encoded = packets.map { it.toByteArray(BlePacketLayout.OMNIPOD_5) }
+
+        // Every packet except the last is inherently full; the last must NOT be padded out.
+        assertThat(encoded.last().size).isLessThan(BlePacketLayout.OMNIPOD_5.maxPayloadSize)
+        // Total bytes on the wire = all headers + exactly the payload, nothing more.
+        val headerBytes = encoded.size * 1 + 1 + 4 + 1 // per-packet index + fragments + crc32 + size
+        assertThat(encoded.sumOf { it.size }).isEqualTo(payload.size + headerBytes)
+        assertThat(roundTrip(payload, BlePacketLayout.OMNIPOD_5)).isEqualTo(payload)
+    }
+
+    @Test
+    fun `Dash packets keep their existing full-length padding`() {
+        val payload = payloadOf(5, seed = 9)
+
+        val encoded = PayloadSplitter(payload, BlePacketLayout.DASH)
+            .splitInPackets().single().toByteArray(BlePacketLayout.DASH)
+
+        assertThat(encoded.size).isEqualTo(BlePacketLayout.DASH.maxPayloadSize)
+    }
+
     @Test
     fun `Byte toUnsignedInt reinterprets the full 0-255 range correctly`() {
         assertThat(0.toByte().toUnsignedInt()).isEqualTo(0)
@@ -108,9 +151,9 @@ class PayloadSplitterJoinerTest : TestBase() {
         val encoded = packets.map { it.toByteArray(BlePacketLayout.OMNIPOD_5) }.toMutableList()
 
         // Flip the first byte of the last packet's actual payload (right after its 6-byte
-        // header). toByteArray() always returns a full maxPayloadSize-length array, zero-
-        // padded past the real content - corrupting the padding tail wouldn't be seen by
-        // parse(), since it only reads up to the packet's own declared "rest" length.
+        // header) rather than anything further out: parse() only reads up to the packet's
+        // own declared "rest" length, so a byte past that is not part of the message and
+        // corrupting it would prove nothing.
         val corruptIndex = 6
         encoded[encoded.lastIndex][corruptIndex] = (encoded.last()[corruptIndex] + 1).toByte()
 
