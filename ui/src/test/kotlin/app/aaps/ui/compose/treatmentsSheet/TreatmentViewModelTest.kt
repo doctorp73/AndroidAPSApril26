@@ -1,6 +1,7 @@
 package app.aaps.ui.compose.treatmentsSheet
 
 import app.aaps.core.interfaces.aps.Loop
+import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.insulin.InsulinManager
 import app.aaps.core.interfaces.iob.IobCobCalculator
@@ -36,6 +37,7 @@ internal class TreatmentViewModelTest {
     @Mock private lateinit var rh: ResourceHelper
     @Mock private lateinit var preferences: Preferences
     @Mock private lateinit var activePlugin: ActivePlugin
+    @Mock private lateinit var config: Config
     @Mock private lateinit var profileFunction: ProfileFunction
     @Mock private lateinit var loop: Loop
     @Mock private lateinit var iobCobCalculator: IobCobCalculator
@@ -67,7 +69,7 @@ internal class TreatmentViewModelTest {
         whenever(quickWizard.changes).thenReturn(MutableStateFlow(0))
         whenever(rxBus.toFlow(EventRefreshOverview::class.java)).thenReturn(emptyFlow())
         sut = TreatmentViewModel(
-            rh, preferences, activePlugin, profileFunction, loop, iobCobCalculator,
+            rh, preferences, activePlugin, config, profileFunction, loop, iobCobCalculator,
             constraintChecker, quickWizard, rxBus, aapsLogger, dexcomBoyda, elementAvailability,
             insulinManager
         )
