@@ -7,11 +7,13 @@ import app.aaps.core.interfaces.pump.BlePreCheck
 import app.aaps.core.interfaces.pump.BolusProgressData
 import app.aaps.core.interfaces.pump.DetailedBolusInfo
 import app.aaps.core.interfaces.pump.PumpSync
+import app.aaps.core.interfaces.notifications.NotificationId
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.queue.CustomCommand
 import app.aaps.pump.omnipod.common.bledriver.comm.O5BleManager
 import app.aaps.pump.omnipod.common.bledriver.event.PodEvent
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.ActivationProgress
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlarmType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.AlertType
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.DeliveryStatus
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
@@ -34,6 +36,8 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mock
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
@@ -456,5 +460,72 @@ class O5PumpPluginTest : TestBaseWithProfile() {
         assertThat(result!!.success).isTrue()
         assertThat(result.enacted).isFalse()
         verify(bleManager, never()).sendCommand(any(), any())
+    }
+
+    // -- checkPodFault: a real pod fault must produce a user-facing notification, not just -
+    // -- silent internal state (the gap Dash didn't have but O5 originally did) ------------
+
+    @Test
+    fun `checkPodFault posts a notification and records an announcement on a new alarm`() {
+        whenever(podStateManager.alarmSynced).thenReturn(false)
+        whenever(podStateManager.alarmType).thenReturn(AlarmType.ALARM_OCCLUDED)
+        whenever(commandQueue.isCustomCommandInQueue(CommandDeactivatePod::class.java)).thenReturn(false)
+        whenever(podStateManager.podId).thenReturn(9999L)
+
+        runBlocking {
+            plugin.checkPodFault()
+
+            verify(notificationManager).post(
+                eq(NotificationId.OMNIPOD_POD_FAULT), any<String>(), level = any(), validMinutes = any(),
+                soundRes = anyOrNull(), actions = any(), validityCheck = anyOrNull()
+            )
+            verify(pumpSync).insertAnnouncement(any<String>(), any<Long>(), eq(PumpType.OMNIPOD_5), eq("9999"))
+        }
+        verify(podStateManager).alarmSynced = true
+    }
+
+    @Test
+    fun `checkPodFault is a no-op once the current alarm is already synced - not re-posted on every poll`() {
+        whenever(podStateManager.alarmSynced).thenReturn(true)
+
+        runBlocking { plugin.checkPodFault() }
+
+        verify(notificationManager, never()).post(
+            any(), any<String>(), level = any(), validMinutes = any(),
+            soundRes = anyOrNull(), actions = any(), validityCheck = anyOrNull()
+        )
+    }
+
+    @Test
+    fun `checkPodFault is a no-op when there is no alarm`() {
+        whenever(podStateManager.alarmSynced).thenReturn(false)
+        whenever(podStateManager.alarmType).thenReturn(null)
+
+        runBlocking { plugin.checkPodFault() }
+
+        verify(notificationManager, never()).post(
+            any(), any<String>(), level = any(), validMinutes = any(),
+            soundRes = anyOrNull(), actions = any(), validityCheck = anyOrNull()
+        )
+        verify(podStateManager, never()).alarmSynced = any()
+    }
+
+    @Test
+    fun `checkPodFault skips the notification but still records the announcement when deactivation is already queued`() {
+        whenever(podStateManager.alarmSynced).thenReturn(false)
+        whenever(podStateManager.alarmType).thenReturn(AlarmType.ALARM_OCCLUDED)
+        whenever(commandQueue.isCustomCommandInQueue(CommandDeactivatePod::class.java)).thenReturn(true)
+        whenever(podStateManager.podId).thenReturn(9999L)
+
+        runBlocking {
+            plugin.checkPodFault()
+
+            verify(notificationManager, never()).post(
+                any(), any<String>(), level = any(), validMinutes = any(),
+                soundRes = anyOrNull(), actions = any(), validityCheck = anyOrNull()
+            )
+            verify(pumpSync).insertAnnouncement(any<String>(), any<Long>(), eq(PumpType.OMNIPOD_5), eq("9999"))
+        }
+        verify(podStateManager).alarmSynced = true
     }
 }

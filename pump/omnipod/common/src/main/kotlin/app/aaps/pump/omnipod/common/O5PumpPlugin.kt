@@ -255,6 +255,7 @@ class O5PumpPlugin @Inject constructor(
         try {
             fetchStatus().blockingAwait()
             reconcilePendingDose()
+            checkPodFault()
             // Self-healing preference sync: cheap no-op when nothing changed (see
             // updateAlertConfiguration()'s syncedAlertSettings guard), so piggybacking on
             // every status poll picks up a preference change within one poll cycle without
@@ -264,6 +265,39 @@ class O5PumpPlugin @Inject constructor(
             aapsLogger.error(LTag.PUMP, "Error in O5 getPumpStatus", e)
         }
         syncPumpFlows()
+    }
+
+    /**
+     * Posts a user-facing [NotificationId.OMNIPOD_POD_FAULT] alert (with sound) plus a
+     * [PumpSync.insertAnnouncement] entry the first time [O5PodStateManager.alarmType]
+     * is seen non-null, mirroring Dash's `OmnipodDashPumpPlugin.checkPodKaput()` handling -
+     * without this, a faulted O5 pod only shows CRITICAL status on
+     * the Omnipod overview screen with no system notification/sound, so a fault could go
+     * unnoticed if the user isn't actively looking at that screen. [O5PodStateManager
+     * .alarmSynced] makes this idempotent across repeated status polls of the same fault;
+     * the notification is skipped (but the announcement/sync flag are not) if a pod
+     * deactivation is already queued, since the user is already acting on the fault.
+     *
+     * Internal (rather than private) to allow unit testing within this module, without
+     * needing to drive [getPumpStatus]'s full status-poll chain.
+     */
+    internal suspend fun checkPodFault() {
+        if (podStateManager.alarmSynced) return
+        val alarm = podStateManager.alarmType ?: return
+        if (!commandQueue.isCustomCommandInQueue(CommandDeactivatePod::class.java)) {
+            notificationManager.post(
+                NotificationId.OMNIPOD_POD_FAULT,
+                alarm.toString(),
+                soundRes = app.aaps.core.ui.R.raw.boluserror
+            )
+        }
+        pumpSync.insertAnnouncement(
+            error = alarm.toString(),
+            pumpId = System.currentTimeMillis(),
+            pumpType = PumpType.OMNIPOD_5,
+            pumpSerial = serialNumber()
+        )
+        podStateManager.alarmSynced = true
     }
 
     private fun fetchStatus(): Completable = Completable.defer {
