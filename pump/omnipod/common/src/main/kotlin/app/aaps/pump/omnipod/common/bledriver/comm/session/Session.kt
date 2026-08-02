@@ -7,7 +7,6 @@ import app.aaps.pump.omnipod.common.bledriver.comm.Ids
 import app.aaps.pump.omnipod.common.bledriver.comm.endecrypt.EnDecrypt
 import app.aaps.pump.omnipod.common.bledriver.comm.exceptions.CouldNotParseResponseException
 import app.aaps.pump.omnipod.common.bledriver.comm.exceptions.MessageIOException
-import app.aaps.pump.omnipod.common.bledriver.comm.message.CrcMismatchException
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageIO
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessagePacket
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageSendErrorConfirming
@@ -126,7 +125,7 @@ class Session(
         return CommandReceiveSuccess(response)
     }
 
-    @Throws(CouldNotParseResponseException::class, UnsupportedOperationException::class, CrcMismatchException::class)
+    @Throws(CouldNotParseResponseException::class, UnsupportedOperationException::class)
     private fun parseResponse(decrypted: MessagePacket): Response {
 
         val data = parseKeys(arrayOf(RESPONSE_PREFIX), decrypted.payload)[0]
@@ -135,29 +134,30 @@ class Session(
         // uniqueId is still not validated - matches OmnipodKit's own PodCommsSession.swift,
         // which declares PodCommsError.invalidAddress but never actually throws it either.
         //
-        // CRC and the embedded command sequence number ARE now validated, but O5-only
-        // (commandSigner != null - see this class's constructor doc). Confirmed against
-        // OmnipodKit's BleMessageTransport.swift: Dash pods generate this envelope's CRC16
-        // with an algorithm real Dash firmware itself doesn't consistently honor - even
-        // Insulet's own PDM ignores it for Dash - while O5 (like Eros) pods do produce a
-        // checkable one, so OmnipodKit only sets `checkCRC: podType.isO5`. The algorithm
-        // itself is [MessageUtil.createCrc] - the same one already used and enforced for
-        // every outgoing command's own trailing CRC in this codebase (and, independently,
-        // in the Eros driver's OmnipodCrc.crc16) - confirmed to be the identical CRC16
-        // (poly 0x8005, table-driven) OmnipodKit's CRC16.swift implements, despite this
-        // envelope having once looked like a third, unconfirmed variant.
+        // The trailing CRC is deliberately NOT enforced, only logged. An earlier revision of
+        // this method did enforce it (on research claiming OmnipodKit checks it for O5), but
+        // real Omnipod 5 traffic disproves that: of 400 pod responses captured from a working
+        // Loop/Trio installation's Device Communication Log, 389 fail this CRC while all
+        // captured *outgoing* messages match it exactly. OmnipodKit's own source comment says
+        // the pod-generated CRC's "algorithm is not understood" - that evidently applies to O5
+        // as well, not just Dash. Enforcing it would reject essentially every response.
+        //
+        // The embedded command sequence number IS validated, O5-only (commandSigner != null -
+        // see this class's constructor doc), because that one is confirmed correct - see
+        // [validateSequenceNumber].
         if (data.size < RESPONSE_ENVELOPE_MIN_SIZE) {
             aapsLogger.warn(LTag.PUMPBTCOMM, "Response envelope shorter than expected (${data.size} bytes): ${data.toHex()}")
         } else {
             val uniqueId = data.copyOfRange(0, 4)
             val lengthAndSequenceNumber = data.copyOfRange(4, 6)
             val crc = data.copyOfRange(data.size - 2, data.size)
+            val computedCrc = MessageUtil.createCrc(data.copyOfRange(0, data.size - 2))
             aapsLogger.debug(
                 LTag.PUMPBTCOMM,
-                "Response envelope fields: uniqueId=${uniqueId.toHex()}, lengthAndSequenceNumber=${lengthAndSequenceNumber.toHex()}, crc=${crc.toHex()}"
+                "Response envelope fields: uniqueId=${uniqueId.toHex()}, lengthAndSequenceNumber=${lengthAndSequenceNumber.toHex()}, " +
+                    "crc=${crc.toHex()} (computed %04x, mismatch is expected and not an error)".format(computedCrc)
             )
             if (commandSigner != null) {
-                validateCrc(data)
                 lastSentCommandSequenceNumber?.let { validateSequenceNumber(lengthAndSequenceNumber, it) }
             }
         }
@@ -166,30 +166,36 @@ class Session(
         return ResponseUtil.parseResponse(payload)
     }
 
-    /** Internal (rather than private) to allow unit testing within this module against
-     *  hand-crafted byte arrays, without simulating a full encrypted round trip. */
-    @Throws(CrcMismatchException::class)
-    internal fun validateCrc(data: ByteArray) {
-        val expected = ByteBuffer.wrap(data.copyOfRange(data.size - 2, data.size)).short
-        val actual = MessageUtil.createCrc(data.copyOfRange(0, data.size - 2))
-        if (actual != expected) {
-            throw CrcMismatchException(expected.toLong(), actual.toLong(), data)
-        }
-    }
-
-    /** [lengthAndSequenceNumber] packs the command sequence number the same way
-     *  [app.aaps.pump.omnipod.common.bledriver.pod.command.base.HeaderEnabledCommand
-     *  .encodeHeader] does for outgoing commands - bits 13-10 of the big-endian short
-     *  (bit 15 = multi-command flag, bits 9-0 = body length). Internal (rather than
-     *  private) to allow unit testing within this module against hand-crafted byte
-     *  arrays, without simulating a full encrypted round trip. */
+    /**
+     * Checks that the pod echoed back the sequence number this protocol expects for a
+     * response: **the request's sequence number plus one**, wrapped to 4 bits - not the
+     * request's own number. OmnipodKit does the same, explicitly, in
+     * BleMessageTransport.sendMessage(): it sets `messageNumber = message.sequenceNum` and
+     * then calls `incrementMessageNumber()` with the comment "bump to match expected
+     * Omnipod message # in response", before readAndAckResponse() compares against it.
+     *
+     * Confirmed against real Omnipod 5 traffic (a working Loop/Trio installation's Device
+     * Communication Log): every request/response pair shows response == request + 1, e.g.
+     * requests with sequence 1/2/3/14 drew responses with sequence 2/3/4/15. An earlier
+     * revision of this method compared against the request's own number and so would have
+     * rejected every response the pod ever sent.
+     *
+     * [lengthAndSequenceNumber] packs the number the same way
+     * [app.aaps.pump.omnipod.common.bledriver.pod.command.base.HeaderEnabledCommand
+     * .encodeHeader] does for outgoing commands - bits 13-10 of the big-endian short
+     * (bit 15 = multi-command flag, bits 9-0 = body length).
+     *
+     * Internal (rather than private) to allow unit testing within this module against
+     * captured byte arrays, without simulating a full encrypted round trip.
+     */
     @Throws(CouldNotParseResponseException::class)
-    internal fun validateSequenceNumber(lengthAndSequenceNumber: ByteArray, expected: Short) {
+    internal fun validateSequenceNumber(lengthAndSequenceNumber: ByteArray, sentSequenceNumber: Short) {
         val packed = ByteBuffer.wrap(lengthAndSequenceNumber).short.toInt()
         val actual = (packed shr 10) and 0x0f
-        if (actual != expected.toInt() and 0x0f) {
+        val expected = (sentSequenceNumber.toInt() + 1) and 0x0f
+        if (actual != expected) {
             throw CouldNotParseResponseException(
-                "Response sequence number mismatch: expected ${expected.toInt() and 0x0f}, got $actual"
+                "Response sequence number mismatch: expected $expected (sent ${sentSequenceNumber.toInt() and 0x0f} + 1), got $actual"
             )
         }
     }

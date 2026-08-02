@@ -5,9 +5,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.Ids
 import app.aaps.pump.omnipod.common.bledriver.comm.endecrypt.EnDecrypt
 import app.aaps.pump.omnipod.common.bledriver.comm.endecrypt.Nonce
 import app.aaps.pump.omnipod.common.bledriver.comm.exceptions.CouldNotParseResponseException
-import app.aaps.pump.omnipod.common.bledriver.comm.message.CrcMismatchException
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageIO
-import app.aaps.pump.omnipod.common.bledriver.pod.util.MessageUtil
 import app.aaps.shared.tests.AAPSLoggerTest
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -16,11 +14,15 @@ import org.mockito.kotlin.mock
 import java.nio.ByteBuffer
 
 /**
- * [Session.validateCrc]/[Session.validateSequenceNumber] - the O5-only response-envelope
- * checks (see [Session.parseResponse]'s doc comment for why they're O5-only, not Dash).
- * Exercised directly against hand-crafted bytes rather than through a full encrypted round
- * trip - these two functions are pure w.r.t. their explicit parameters (no session/crypto
- * state involved), so a real [Session] instance here is just a vehicle to call them on.
+ * [Session.validateSequenceNumber] - the O5-only response-envelope sequence check (see
+ * [Session.parseResponse]'s doc comment for why the envelope's trailing CRC is
+ * deliberately *not* enforced alongside it).
+ *
+ * The rule under test is that a pod's response carries the request's sequence number **plus
+ * one**, which is pinned below against real Omnipod 5 request/response pairs captured from a
+ * working Loop/Trio installation's Device Communication Log. An earlier revision compared
+ * against the request's own sequence number and would have rejected every response a real
+ * pod ever sent.
  */
 class SessionResponseValidationTest {
 
@@ -32,69 +34,81 @@ class SessionResponseValidationTest {
         return Session(AAPSLoggerTest(), mock<MessageIO>(), ids, sessionKeys, enDecrypt)
     }
 
-    // -- validateCrc -------------------------------------------------------------------------
+    private fun hex(s: String): ByteArray = ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+
+    /** Bytes 4..6 of an inner Omnipod message: uniqueId(4) + length/sequence(2) + body + CRC(2). */
+    private fun lengthAndSequenceBytesOf(message: String): ByteArray = hex(message).copyOfRange(4, 6)
+
+    private fun sequenceNumberOf(message: String): Short =
+        (((ByteBuffer.wrap(lengthAndSequenceBytesOf(message)).short.toInt() shr 10) and 0x0f)).toShort()
+
+    /**
+     * Real Omnipod 5 traffic (pod address 1749dbcb), request paired with the response it drew.
+     * Includes a request at sequence 14 so the pairing is pinned near the 4-bit wrap, not only
+     * for small numbers.
+     */
+    private val capturedPairs = listOf(
+        "1749dbcb38071f05494e532e028173" to "1749dbcb3c0a1d180403700000472fff0310",
+        "1749dbcb00201a0e494e532e01008501384000060006160e0000003c01c9c380003c01c9c380010c" to
+            "1749dbcb040a1d280403000000472fff83db",
+        "1749dbcb04030e010782e2" to "1749dbcb080a1d280403000000473bff8219",
+        "1749dbcb08030e010700e7" to "1749dbcb0c0a1d280403800000474bff03c9",
+        "1749dbcb0c030e010781ec" to "1749dbcb100a1d2804038000004757ff0192"
+    )
 
     @Test
-    fun `validateCrc accepts a correctly-computed trailing CRC`() {
-        val body = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-        val crc = MessageUtil.createCrc(body)
-        val data = ByteBuffer.allocate(body.size + 2).put(body).putShort(crc).array()
-
-        session().validateCrc(data) // must not throw
+    fun `real captured O5 traffic - every response carries the request sequence number plus one`() {
+        val session = session()
+        for ((request, response) in capturedPairs) {
+            val sent = sequenceNumberOf(request)
+            // Pins the protocol rule itself, independent of the code under test.
+            assertThat(sequenceNumberOf(response).toInt()).isEqualTo((sent.toInt() + 1) and 0x0f)
+            // Must not throw.
+            session.validateSequenceNumber(lengthAndSequenceBytesOf(response), sent)
+        }
     }
 
     @Test
-    fun `validateCrc rejects a wrong trailing CRC`() {
-        val body = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-        val wrongCrc = (MessageUtil.createCrc(body) + 1).toShort()
-        val data = ByteBuffer.allocate(body.size + 2).put(body).putShort(wrongCrc).array()
+    fun `a response echoing the request's own sequence number is rejected`() {
+        // The exact mistake the previous revision made: it treated this as the success case.
+        val session = session()
+        val (request, _) = capturedPairs.first()
+        val sent = sequenceNumberOf(request)
 
-        assertThrows(CrcMismatchException::class.java) { session().validateCrc(data) }
+        assertThrows(CouldNotParseResponseException::class.java) {
+            session.validateSequenceNumber(lengthAndSequenceBytesOf(request), sent)
+        }
     }
 
-    // -- validateSequenceNumber ---------------------------------------------------------------
-    // Bit layout cross-checked against HeaderEnabledCommand.encodeHeader() - the same,
-    // already real-hardware-proven encoder used for every outgoing command - rather than
-    // just the reverse-engineered Swift description, so a real symmetry bug would show up
-    // as a failing round trip below, not just a plausible-looking assertion.
+    @Test
+    fun `sequence numbers wrap at 4 bits - a request at 15 expects a response at 0`() {
+        val session = session()
+        val response = packedLengthAndSequenceNumber(sequenceNumber = 0, length = 10, multiCommandFlag = false)
 
+        session.validateSequenceNumber(response, sentSequenceNumber = 15)
+    }
+
+    @Test
+    fun `the length and multiCommandFlag bits sharing the field are ignored`() {
+        val session = session()
+        val response = packedLengthAndSequenceNumber(sequenceNumber = 4, length = 1000, multiCommandFlag = true)
+
+        session.validateSequenceNumber(response, sentSequenceNumber = 3)
+    }
+
+    @Test
+    fun `a genuinely out-of-order response is rejected`() {
+        val session = session()
+        val response = packedLengthAndSequenceNumber(sequenceNumber = 9, length = 10, multiCommandFlag = false)
+
+        assertThrows(CouldNotParseResponseException::class.java) {
+            session.validateSequenceNumber(response, sentSequenceNumber = 3)
+        }
+    }
+
+    /** Mirrors HeaderEnabledCommand.encodeHeader()'s second Short, minus the leading uniqueId. */
     private fun packedLengthAndSequenceNumber(sequenceNumber: Short, length: Short, multiCommandFlag: Boolean): ByteArray {
-        // Mirrors HeaderEnabledCommand.encodeHeader()'s second Short exactly, minus the
-        // leading 4-byte uniqueId (not relevant to sequence-number extraction).
         val packed = (sequenceNumber.toInt() and 0x0f shl 10 or length.toInt() or ((if (multiCommandFlag) 1 else 0) shl 15)).toShort()
         return ByteBuffer.allocate(2).putShort(packed).array()
-    }
-
-    @Test
-    fun `validateSequenceNumber accepts a response echoing the expected sequence number`() {
-        val bytes = packedLengthAndSequenceNumber(sequenceNumber = 7, length = 42, multiCommandFlag = false)
-
-        session().validateSequenceNumber(bytes, expected = 7)
-    }
-
-    @Test
-    fun `validateSequenceNumber ignores the length and multiCommandFlag bits it shares the byte with`() {
-        val bytes = packedLengthAndSequenceNumber(sequenceNumber = 3, length = 1000, multiCommandFlag = true)
-
-        session().validateSequenceNumber(bytes, expected = 3) // must not throw
-    }
-
-    @Test
-    fun `validateSequenceNumber rejects a mismatched sequence number`() {
-        val bytes = packedLengthAndSequenceNumber(sequenceNumber = 5, length = 0, multiCommandFlag = false)
-
-        assertThrows(CouldNotParseResponseException::class.java) { session().validateSequenceNumber(bytes, expected = 6) }
-    }
-
-    @Test
-    fun `validateSequenceNumber only compares the low 4 bits of expected - matching the 4-bit wire field`() {
-        val bytes = packedLengthAndSequenceNumber(sequenceNumber = 2, length = 0, multiCommandFlag = false)
-
-        // expected=18 (0x12) has the same low 4 bits as sequenceNumber=2 (0x02) - must still pass,
-        // since podStateManager.msgSequenceNumber is already guaranteed 4-bit-wrapped in practice
-        // (see O5PodStateManager.increaseMessageSequenceNumber's doc comment) and this function
-        // must mask defensively, not assume that invariant holds.
-        session().validateSequenceNumber(bytes, expected = 18)
-        assertThat(0x12 and 0x0f).isEqualTo(2)
     }
 }
