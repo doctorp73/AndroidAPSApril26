@@ -22,6 +22,7 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.never
+import org.mockito.kotlin.timeout
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -66,11 +67,14 @@ class TidepoolPluginTest : TestBaseWithProfile() {
             receiverDelegate, authFlowOut, tidepoolRepository, dateUtil, persistenceLayer
         )
         runBlocking { plugin.onStart() }
-        Thread.sleep(500) // Ensure flow collector has started and processed initial value
         connectivityFlow.value = ConnectivityStatus("Connected", allowed = true, connected = true)
-        Thread.sleep(1000) // Allow flow collector on Dispatchers.IO to process
 
-        verify(authFlowOut).updateConnectionStatus(eq(AuthFlowOut.ConnectionStatus.FETCHING_TOKEN), eq("Connecting"))
+        // Flaky as a fixed Thread.sleep(): the flow collector runs on a real Dispatchers.IO
+        // thread, and a fixed delay races against it under system load (confirmed: this test
+        // already failed intermittently before any of today's changes). timeout() polls for
+        // the interaction instead of gambling on a fixed wait, and fails fast if it never
+        // arrives rather than silently passing after just sleeping through it.
+        verify(authFlowOut, timeout(5000)).updateConnectionStatus(eq(AuthFlowOut.ConnectionStatus.FETCHING_TOKEN), eq("Connecting"))
         runBlocking { plugin.onStop() }
     }
 

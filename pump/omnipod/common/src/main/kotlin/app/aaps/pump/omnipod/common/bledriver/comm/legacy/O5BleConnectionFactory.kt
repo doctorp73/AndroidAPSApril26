@@ -10,6 +10,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.session.BleConnect
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.session.BleConnectionFactory
 import app.aaps.pump.omnipod.common.bledriver.comm.legacy.session.O5Connection
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
+import app.aaps.pump.omnipod.common.bledriver.pod.util.P256KeyGenerator
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,7 +24,8 @@ class O5BleConnectionFactory @Inject constructor(
     private val context: Context,
     private val aapsLogger: AAPSLogger,
     private val config: Config,
-    private val podState: O5PodStateManager
+    private val podState: O5PodStateManager,
+    private val p256KeyGenerator: P256KeyGenerator
 ) : BleConnectionFactory {
 
     private val bluetoothAdapter: BluetoothAdapter?
@@ -32,6 +34,6 @@ class O5BleConnectionFactory @Inject constructor(
     override fun createConnection(podAddress: String): BleConnection {
         val adapter = bluetoothAdapter ?: throw ConnectException("Bluetooth not available")
         val podDevice = adapter.getRemoteDevice(podAddress)
-        return O5Connection(podDevice, aapsLogger, config, context, podState)
+        return O5Connection(podDevice, aapsLogger, config, context, podState, p256KeyGenerator)
     }
 }

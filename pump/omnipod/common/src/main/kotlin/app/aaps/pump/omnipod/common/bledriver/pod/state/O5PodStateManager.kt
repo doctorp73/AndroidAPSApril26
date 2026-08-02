@@ -168,6 +168,13 @@ interface O5PodStateManager {
     val podStatusWhenAlarmOccurred: PodStatus?
     val rssi: Short?
 
+    /** True once the current [alarmType] has already produced a user-facing notification
+     *  and a [app.aaps.core.interfaces.pump.PumpSync.insertAnnouncement] entry - set by
+     *  [app.aaps.pump.omnipod.common.O5PumpPlugin]'s checkPodFault() so a still-faulted pod
+     *  doesn't re-notify on every status poll. Mirrors [OmnipodDashPodStateManager
+     *  .alarmSynced]; reset back to false only via [reset] (a new pod pairing). */
+    var alarmSynced: Boolean
+
     // -- on-demand diagnostics, populated from status pages 5/1 --------------------------
     // Fetched conditionally (not on every poll) by O5PumpPlugin.fetchStatus - see that
     // method's doc comment.
@@ -347,6 +354,7 @@ class InMemoryO5PodStateManager : O5PodStateManager {
         private set
     @Volatile override var rssi: Short? = null
         private set
+    @Volatile override var alarmSynced: Boolean = false
 
     @Volatile override var podActivatedAt: Long? = null
         private set
@@ -486,6 +494,7 @@ class InMemoryO5PodStateManager : O5PodStateManager {
         occlusionAlarm = null
         podStatusWhenAlarmOccurred = null
         rssi = null
+        alarmSynced = false
         podActivatedAt = null
         triggeredAlertTimes = null
         suspendAlertsEnabled = true

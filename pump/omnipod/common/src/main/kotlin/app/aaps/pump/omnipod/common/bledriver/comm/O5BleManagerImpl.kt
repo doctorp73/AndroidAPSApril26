@@ -33,6 +33,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.session.ConnectionWaitConditi
 import app.aaps.pump.omnipod.common.bledriver.comm.session.NotConnected
 import app.aaps.pump.omnipod.common.bledriver.comm.session.Session
 import app.aaps.pump.omnipod.common.bledriver.event.PodEvent
+import app.aaps.pump.omnipod.common.bledriver.pod.command.aid.O5AidSetupCommands
 import app.aaps.pump.omnipod.common.bledriver.pod.command.base.Command
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodType
 import app.aaps.pump.omnipod.common.bledriver.pod.response.AlarmStatusResponse
@@ -46,6 +47,7 @@ import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
 import app.aaps.pump.omnipod.common.bledriver.pod.security.SecureO5RegistrationStorage
 import app.aaps.pump.omnipod.common.bledriver.pod.util.P256KeyGenerator
 import app.aaps.pump.omnipod.common.bledriver.pod.util.PodTypeAwarePodScanner
+import io.reactivex.rxjava3.core.Completable
 import io.reactivex.rxjava3.core.Observable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
@@ -312,6 +314,21 @@ class O5BleManagerImpl @Inject constructor(
         } catch (ex: Exception) {
             disconnect(false)
             emitter.tryOnError(ex)
+        } finally {
+            busy.set(false)
+        }
+    }
+
+    override fun sendAidSetupCommands(): Completable = Completable.fromAction {
+        if (!busy.compareAndSet(false, true)) {
+            throw BusyException()
+        }
+        try {
+            val session = assertSessionEstablished()
+            O5AidSetupCommands.send(session)
+        } catch (ex: Exception) {
+            disconnect(false)
+            throw ex
         } finally {
             busy.set(false)
         }

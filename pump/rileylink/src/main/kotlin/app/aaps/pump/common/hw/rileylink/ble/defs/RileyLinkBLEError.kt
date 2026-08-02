@@ -9,5 +9,7 @@ enum class RileyLinkBLEError(val description: String) {
     Timeout("Timeout"),  //
     Interrupted("Interrupted"),
     NoResponse("No response from RileyLink"),
+    InvalidParam("RileyLink reported invalid parameter"),
+    UnknownCommand("RileyLink reported unknown command"),
     TooShortOrNullResponse("Too short or null decoded response.");
 }

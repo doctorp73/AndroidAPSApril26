@@ -26,11 +26,18 @@ data class MessagePacket(
     // implementation itself. No wire trace or spec has surfaced what sas/tfs actually mean.
     val sas: Boolean = true,
     val tfs: Boolean = false,
-    val version: Short = 0.toShort()
+    val version: Short = 0.toShort(),
+    /** O5-only: raw (r||s, 64-byte) P-256 ECDSA signature for [MessageType.ENCRYPTED_SIGNED]
+     *  messages - set only after [payload] has already been AES-CCM encrypted (see
+     *  [app.aaps.pump.omnipod.common.bledriver.comm.session.Session]'s signing step).
+     *  Appended to the wire bytes after [payload] but - matching OmnipodKit's
+     *  MessagePacket.swift exactly - deliberately excluded from the size field computed
+     *  in [asByteArray], since the pod doesn't count it as part of the message body. */
+    val signatureData: ByteArray? = null
 ) {
 
     fun asByteArray(forEncryption: Boolean = false): ByteArray {
-        val bb = ByteBuffer.allocate(16 + payload.size)
+        val bb = ByteBuffer.allocate(16 + payload.size + (signatureData?.size ?: 0))
         bb.put(MAGIC_PATTERN.toByteArray())
 
         val f1 = Flag()
@@ -57,8 +64,9 @@ data class MessagePacket(
         bb.put(f2.value.toByte())
         bb.put(this.sequenceNumber)
         bb.put(this.ackNumber)
+        val hasTag = type == MessageType.ENCRYPTED || type == MessageType.ENCRYPTED_SIGNED
         val size = payload.size -
-            if (type == MessageType.ENCRYPTED && !forEncryption) 8 else 0
+            if (hasTag && !forEncryption) 8 else 0
         bb.put((size ushr 3).toByte())
         bb.put((size shl 5).toByte())
 
@@ -66,6 +74,7 @@ data class MessagePacket(
         bb.put(this.destination.address)
 
         bb.put(this.payload)
+        signatureData?.let { bb.put(it) }
 
         val ret = ByteArray(bb.position())
         bb.flip()
@@ -97,7 +106,7 @@ data class MessagePacket(
             val lastMessage = f2.get(2) != 0
             val gateway = f2.get(3) != 0
             val type =
-                MessageType.byValue((f1.get(7) or (f1.get(6) shl 1) or (f1.get(5) shl 2) or (f1.get(4) shl 3)).toByte())
+                MessageType.byValue((f2.get(7) or (f2.get(6) shl 1) or (f2.get(5) shl 2) or (f2.get(4) shl 3)).toByte())
             if (version.toInt() != 0) {
                 throw CouldNotParseMessageException(payload)
             }
@@ -106,8 +115,9 @@ data class MessagePacket(
             val size = (payload[6].toInt() shl 3) or (payload[7].toUnsignedInt() ushr 5)
             payload.assertSizeAtLeast(size + HEADER_SIZE)
 
+            val hasTag = type == MessageType.ENCRYPTED || type == MessageType.ENCRYPTED_SIGNED
             val payloadEnd = 16 + size +
-                if (type == MessageType.ENCRYPTED) 8 // TAG
+                if (hasTag) 8 // TAG
                 else 0
 
             return MessagePacket(

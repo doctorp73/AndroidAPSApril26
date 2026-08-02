@@ -41,7 +41,6 @@ import app.aaps.core.data.model.BCR
 import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.CA
 import app.aaps.core.data.time.T
-import app.aaps.core.interfaces.insulin.Insulin
 import app.aaps.core.interfaces.profile.Profile
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.objects.extensions.iobCalc
@@ -63,7 +62,6 @@ import app.aaps.core.interfaces.insulin.InsulinType
  * Composable screen displaying boluses and carbs in a combined list.
  *
  * @param viewModel ViewModel managing state and business logic
- * @param insulin Active insulin for label comparison
  * @param setToolbarConfig Lambda to set toolbar configuration
  * @param onNavigateBack Lambda to handle back navigation
  */
@@ -71,7 +69,6 @@ import app.aaps.core.interfaces.insulin.InsulinType
 @Composable
 fun BolusCarbsScreen(
     viewModel: BolusCarbsViewModel,
-    insulin: Insulin,
     setToolbarConfig: (ToolbarConfig) -> Unit,
     onNavigateBack: () -> Unit = { }
 ) {
@@ -157,7 +154,6 @@ fun BolusCarbsScreen(
                             },
                             onCalculatorClick = { bcr -> showInfoBcr = bcr },
                             profile = profile,
-                            insulin = insulin,
                             rh = viewModel.rh,
                             showInvalidated = uiState.showInvalidated
                         )
@@ -190,7 +186,6 @@ private fun MealLinkItem(
     onLongPress: () -> Unit,
     onCalculatorClick: (BCR) -> Unit,
     profile: Profile?,
-    insulin: Insulin,
     rh: ResourceHelper,
     showInvalidated: Boolean
 ) {
@@ -317,8 +312,11 @@ private fun MealLinkItem(
 
                         val isAfrezzaDose = InsulinType.fromPeak(bolus.iCfg.insulinPeakTime).isInhaled
 
-                        // Insulin label (when different from active) — skip for Afrezza, its type label already says so
-                        val activeLabel = insulin.iCfg.insulinLabel
+                        // Insulin label (when different from active) — skip for Afrezza, its type label
+                        // already says so. The running profile owns the authoritative iCfg; with no
+                        // profile there is nothing to compare against, so the label is shown rather
+                        // than suppressed against a guessed "active".
+                        val activeLabel = profile?.iCfg?.insulinLabel
                         if (!isAfrezzaDose && bolus.iCfg.insulinLabel != activeLabel) {
                             Text(
                                 text = bolus.iCfg.insulinLabel,

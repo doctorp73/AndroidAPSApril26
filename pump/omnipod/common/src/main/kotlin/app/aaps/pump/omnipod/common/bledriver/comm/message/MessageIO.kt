@@ -10,6 +10,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.command.BleCommandFail
 import app.aaps.pump.omnipod.common.bledriver.comm.command.BleCommandNack
 import app.aaps.pump.omnipod.common.bledriver.comm.command.BleCommandRTS
 import app.aaps.pump.omnipod.common.bledriver.comm.command.BleCommandSuccess
+import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.BleCharacteristicIO
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.BleConfirmError
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.BleConfirmIncorrectData
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.BleConfirmSuccess
@@ -20,8 +21,11 @@ import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.BleSendSuccess
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.CmdBleIO
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.DataBleIO
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.BlePacket
+import app.aaps.pump.omnipod.common.bledriver.comm.packet.BlePacketLayout
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.PayloadJoiner
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.PayloadSplitter
+import app.aaps.pump.omnipod.common.bledriver.comm.packet.blePacketLayout
+import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodType
 
 sealed class MessageSendResult
 object MessageSendSuccess : MessageSendResult()
@@ -41,11 +45,29 @@ class MessageIO(
     private val aapsLogger: AAPSLogger,
     private val cmdBleIO: CmdBleIO,
     private val dataBleIO: DataBleIO,
+    private val podType: PodType = PodType.DASH,
 ) {
 
     private val receivedOutOfOrder = LinkedHashMap<Byte, ByteArray>()
     var maxMessageReadTries = 3
     var messageReadTries = 0
+
+    // Dash packets max out at 20 bytes; O5 allows 244-byte packets (see BlePacketLayout /
+    // OmnipodKit's BlePodProfile.swift). Splitting/joining must use the profile matching
+    // the pod actually being talked to.
+    private val packetLayout: BlePacketLayout = podType.blePacketLayout
+
+    // Swift's PeripheralManager waits up to 5s for every data packet and command response
+    // alike (waitForData/waitForCommand), Dash included - but Dash pods are RTS/CTS-paced,
+    // so in practice they respond well within Android's 1s default before this ever
+    // matters. O5 has no such pacing (see the isDash gates above/below), and on real
+    // hardware "Could not read SPS0" - the pod's very first response after pairing begins -
+    // lined up exactly with running out of the shorter 3x1s budget this used to always use.
+    // Scoped to O5 only: Dash's existing 1s default is proven against real Dash hardware and
+    // left untouched. Used for both dataBleIO.receivePacket() and the trailing
+    // cmdBleIO.expectCommandType(SUCCESS) wait in sendMessage() below.
+    private val readTimeoutMs: Long =
+        if (podType.isO5) MESSAGE_READ_TIMEOUT_MS else BleCharacteristicIO.DEFAULT_IO_TIMEOUT_MS
 
     @Suppress("ReturnCount")
     fun sendMessage(msg: MessagePacket): MessageSendResult {
@@ -57,23 +79,30 @@ class MessageIO(
         }
         dataBleIO.flushIncomingQueue()
 
-        val rtsSendResult = cmdBleIO.sendAndConfirmPacket(BleCommandRTS.data)
-        if (rtsSendResult is BleSendErrorSending) {
-            return MessageSendErrorSending(rtsSendResult)
-        }
-        val expectCTS = cmdBleIO.expectCommandType(BleCommandCTS)
-        if (expectCTS !is BleConfirmSuccess) {
-            return MessageSendErrorSending(expectCTS.toString())
+        // RTS/CTS flow control is Dash-specific - Omnipod 5 pods write data packets
+        // directly with no request/clear-to-send preamble (see OmnipodKit's
+        // PeripheralManager+OmnipodKit.swift sendMessagePacket(): `if podType.isDash {
+        // RTS/CTS } else { skip, write directly }`). Sending RTS to an O5 pod gets no
+        // response at all, since it doesn't speak that handshake.
+        if (podType.isDash) {
+            val rtsSendResult = cmdBleIO.sendAndConfirmPacket(BleCommandRTS.data)
+            if (rtsSendResult is BleSendErrorSending) {
+                return MessageSendErrorSending(rtsSendResult)
+            }
+            val expectCTS = cmdBleIO.expectCommandType(BleCommandCTS)
+            if (expectCTS !is BleConfirmSuccess) {
+                return MessageSendErrorSending(expectCTS.toString())
+            }
         }
 
         val payload = msg.asByteArray()
         aapsLogger.debug(LTag.PUMPBTCOMM, "Sending message: ${payload.toHex()}")
-        val splitter = PayloadSplitter(payload)
+        val splitter = PayloadSplitter(payload, packetLayout)
         val packets = splitter.splitInPackets()
 
         for ((index, packet) in packets.withIndex()) {
-            aapsLogger.debug(LTag.PUMPBTCOMM, "Sending DATA: ${packet.toByteArray().toHex()}")
-            val sendResult = dataBleIO.sendAndConfirmPacket(packet.toByteArray())
+            aapsLogger.debug(LTag.PUMPBTCOMM, "Sending DATA: ${packet.toByteArray(packetLayout).toHex()}")
+            val sendResult = dataBleIO.sendAndConfirmPacket(packet.toByteArray(packetLayout))
             val ret = handleSendResult(sendResult, index, packets)
             if (ret !is MessageSendSuccess) {
                 return ret
@@ -87,7 +116,7 @@ class MessageIO(
             }
         }
 
-        return when (val expectSuccess = cmdBleIO.expectCommandType(BleCommandSuccess)) {
+        return when (val expectSuccess = cmdBleIO.expectCommandType(BleCommandSuccess, readTimeoutMs)) {
             is BleConfirmSuccess       ->
                 MessageSendSuccess
 
@@ -108,18 +137,23 @@ class MessageIO(
 
     @Suppress("ReturnCount")
     fun receiveMessage(readRTS: Boolean = true): MessagePacket? {
-        if (readRTS) {
-            val expectRTS = cmdBleIO.expectCommandType(BleCommandRTS, MESSAGE_READ_TIMEOUT_MS)
-            if (expectRTS !is BleConfirmSuccess) {
-                aapsLogger.warn(LTag.PUMPBTCOMM, "Error reading RTS: $expectRTS")
+        // Same Dash-only RTS/CTS gating as sendMessage() - see the comment there. An O5
+        // pod sends its response data directly with no RTS to wait for and no CTS it
+        // expects back.
+        if (podType.isDash) {
+            if (readRTS) {
+                val expectRTS = cmdBleIO.expectCommandType(BleCommandRTS, MESSAGE_READ_TIMEOUT_MS)
+                if (expectRTS !is BleConfirmSuccess) {
+                    aapsLogger.warn(LTag.PUMPBTCOMM, "Error reading RTS: $expectRTS")
+                    return null
+                }
+            }
+
+            val sendResult = cmdBleIO.sendAndConfirmPacket(BleCommandCTS.data)
+            if (sendResult !is BleSendSuccess) {
+                aapsLogger.warn(LTag.PUMPBTCOMM, "Error sending CTS: $sendResult")
                 return null
             }
-        }
-
-        val sendResult = cmdBleIO.sendAndConfirmPacket(BleCommandCTS.data)
-        if (sendResult !is BleSendSuccess) {
-            aapsLogger.warn(LTag.PUMPBTCOMM, "Error sending CTS: $sendResult")
-            return null
         }
         readReset()
         var expected: Byte = 0
@@ -129,7 +163,7 @@ class MessageIO(
                 aapsLogger.warn(LTag.PUMPBTCOMM, "Error reading first packet:$firstPacket")
                 return null
             }
-            val joiner = PayloadJoiner(firstPacket.payload)
+            val joiner = PayloadJoiner(firstPacket.payload, packetLayout)
             maxMessageReadTries = joiner.fullFragments * 2 + 2
             for (i in 1 until joiner.fullFragments + 1) {
                 expected++
@@ -190,7 +224,7 @@ class MessageIO(
                 if (received == null) {
                     MessageSendErrorSending(received.toString())
                 } else {
-                    val sendResult = dataBleIO.sendAndConfirmPacket(packets[receivedCmd.idx.toInt()].toByteArray())
+                    val sendResult = dataBleIO.sendAndConfirmPacket(packets[receivedCmd.idx.toInt()].toByteArray(packetLayout))
                     handleSendResult(sendResult, index, packets)
                 }
             }
@@ -216,7 +250,7 @@ class MessageIO(
         while (messageReadTries < maxMessageReadTries && packetTries < MAX_PACKET_READ_TRIES) {
             messageReadTries++
             packetTries++
-            val received = dataBleIO.receivePacket()
+            val received = dataBleIO.receivePacket(readTimeoutMs)
             if (received == null || received.isEmpty()) {
                 if (nackOnTimeout)
                     cmdBleIO.sendAndConfirmPacket(BleCommandNack(index).data)

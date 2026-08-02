@@ -253,7 +253,11 @@ class ByteBuf(length: Int) {
     }
 
     fun putASCII(string: String, stringLength: Int) {
-        putBytes(string.toByteArray(StandardCharsets.UTF_16LE), stringLength * 2)
+        // Copy-pasted from putUTF16 (2 bytes/char, UTF_16LE) but never adapted: readASCII/getASCII
+        // read stringLength+1 bytes as US_ASCII, so anything written here couldn't be read back
+        // correctly. Currently unused (readASCII has no live caller of this write-side counterpart),
+        // but fixed to match its own read-side semantics rather than left as a latent trap.
+        putBytes(string.toByteArray(StandardCharsets.US_ASCII), stringLength)
         putBytes(0.toByte(), 1)
     }
 

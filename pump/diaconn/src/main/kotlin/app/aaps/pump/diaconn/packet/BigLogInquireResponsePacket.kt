@@ -97,6 +97,7 @@ class BigLogInquireResponsePacket(
         if (result != 0) {
             aapsLogger.debug(LTag.PUMPCOMM, "BigLogInquireResponsePacket Got some Error")
             failed = true
+            diaconnG8Pump.historyLogPageFailed = true
             return
         } else failed = false
 
@@ -104,6 +105,7 @@ class BigLogInquireResponsePacket(
         val result2 = getByteToInt(bufferData)  // 조회결과 1 byte
         if (!isSuccInquireResponseResult(result2)) {
             failed = true
+            diaconnG8Pump.historyLogPageFailed = true
             return
         }
         val logLength = getByteToInt(bufferData) // 로그의 갯수. 1byte

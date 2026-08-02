@@ -21,6 +21,7 @@ import app.aaps.plugins.eversense.packets.e365.AuthStartPacket
 import app.aaps.plugins.eversense.packets.e365.AuthWhoAmIPacket
 import app.aaps.plugins.eversense.packets.e365.Eversense365Packets
 import app.aaps.plugins.eversense.packets.e365.KeepAlivePacket
+import app.aaps.plugins.eversense.packets.e365.PushAlarmWithDataPacket
 import app.aaps.plugins.eversense.packets.e3.EversenseE3Packets
 import app.aaps.plugins.eversense.packets.e3.SaveBondingInformationPacket
 import app.aaps.plugins.eversense.util.EversenseCrypto365Util
@@ -524,18 +525,19 @@ class EversenseGattCallback(
                 }
             }
             return
-        } else if (data.size >= 4 && data[0] == Eversense365Packets.NotificationResponseId && data[1] == 0x03.toByte()) {
-            // Push alarm notification
-            val alarmCode = data[2].toInt() and 0xFF
-            val alarm = app.aaps.plugins.eversense.models.ActiveAlarm(
-                code = app.aaps.plugins.eversense.enums.EversenseAlarm.from(alarmCode),
-                codeRaw = alarmCode,
-                flag = 0,
-                priority = 0
-            )
-            EversenseLogger.info(TAG, "Push alarm received: ${alarm.code.title}")
+        } else if (data.size >= 2 && data[0] == Eversense365Packets.NotificationResponseId && data[1] == Eversense365Packets.NotificationAlarmWithData) {
+            // Push alarm notification. Delegate to PushAlarmWithDataPacket (see its own doc comment
+            // for the empirically-confirmed byte layout) instead of duplicating the parsing inline,
+            // matching how KeepAlivePacket is already handled a few lines above.
+            val packet = PushAlarmWithDataPacket()
+            packet.appendData(data.toUByteArray())
+            val response = packet.parseResponse() ?: run {
+                EversenseLogger.warning(TAG, "Push alarm packet too short -> skipping")
+                return
+            }
+            EversenseLogger.info(TAG, "Push alarm received: ${response.alarm.code.title}")
             handler.post {
-                plugin.watchers.forEach { it.onAlarmReceived(alarm) }
+                plugin.watchers.forEach { it.onAlarmReceived(response.alarm) }
             }
             return
         } else if (Eversense365Packets.isNotificationPacket(data[0])) {

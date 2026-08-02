@@ -406,6 +406,7 @@ class EquilManager @Inject constructor(
             return pumpEnactResult.success(false)
         }
         var allCount = 1
+        var commFailed = false
         while (startIndex != index && allCount < 20) {
             startIndex++
             if (startIndex > 2000) {
@@ -418,10 +419,15 @@ class EquilManager @Inject constructor(
                 setStartHistoryIndex(currentIndex)
                 allCount++
             } else {
+                // loadEquilHistory(startIndex) returns -1 on a comm timeout/failure or exception (see
+                // its cmdSuccess check) - indistinguishable at this point from "caught up", but it is
+                // not success. Same bug already fixed in CmdDevicesGet: don't report success(true)
+                // for a page-sync loop that broke out on a communication failure.
+                commFailed = true
                 break
             }
         }
-        return pumpEnactResult.success(true)
+        return pumpEnactResult.success(!commFailed)
     }
 
     fun executeCmd(command: BaseCmd): PumpEnactResult {

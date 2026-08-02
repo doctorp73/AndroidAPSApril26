@@ -2,6 +2,8 @@ package app.aaps.pump.omnipod.common.bledriver.comm.legacy.session
 
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
@@ -15,13 +17,17 @@ import app.aaps.pump.omnipod.common.bledriver.comm.Ids
 import app.aaps.pump.omnipod.common.bledriver.comm.endecrypt.EnDecrypt
 import app.aaps.pump.omnipod.common.bledriver.comm.exceptions.ConnectException
 import app.aaps.pump.omnipod.common.bledriver.comm.exceptions.FailedToConnectException
+import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.BleCharacteristicIO
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.io.CharacteristicType
 import app.aaps.pump.omnipod.common.bledriver.comm.interfaces.session.BleConnection
 import app.aaps.pump.omnipod.common.bledriver.comm.legacy.callbacks.BleCommCallbacks
+import app.aaps.pump.omnipod.common.bledriver.comm.legacy.callbacks.WriteConfirmationSuccess
 import app.aaps.pump.omnipod.common.bledriver.comm.legacy.io.CmdBleIO
 import app.aaps.pump.omnipod.common.bledriver.comm.legacy.io.DataBleIO
 import app.aaps.pump.omnipod.common.bledriver.comm.legacy.io.IncomingPackets
 import app.aaps.pump.omnipod.common.bledriver.comm.message.MessageIO
+import app.aaps.pump.omnipod.common.bledriver.comm.packet.BlePacketLayout
+import app.aaps.pump.omnipod.common.bledriver.comm.pair.O5CertificateStore
 import app.aaps.pump.omnipod.common.bledriver.comm.session.Connected
 import app.aaps.pump.omnipod.common.bledriver.comm.session.ConnectionState
 import app.aaps.pump.omnipod.common.bledriver.comm.session.ConnectionWaitCondition
@@ -35,6 +41,9 @@ import app.aaps.pump.omnipod.common.bledriver.comm.session.SessionKeys
 import app.aaps.pump.omnipod.common.bledriver.comm.session.SessionNegotiationResynchronization
 import app.aaps.pump.omnipod.common.bledriver.pod.definition.PodType
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
+import app.aaps.pump.omnipod.common.bledriver.pod.util.BluetoothServiceUuids
+import app.aaps.pump.omnipod.common.bledriver.pod.util.P256KeyGenerator
+import java.util.UUID
 
 /**
  * BLE GATT connection lifecycle and session establishment for Omnipod 5, parallel to
@@ -54,7 +63,8 @@ class O5Connection(
     private val aapsLogger: AAPSLogger,
     private val config: Config,
     private val context: Context,
-    private val podState: O5PodStateManager
+    private val podState: O5PodStateManager,
+    private val p256KeyGenerator: P256KeyGenerator
 ) : BleConnection, DisconnectHandler {
 
     private val incomingPackets = IncomingPackets()
@@ -107,8 +117,40 @@ class O5Connection(
         }
         podState.bluetoothConnectionState = O5PodStateManager.BluetoothConnectionState.CONNECTED
 
+        // Unlike iOS's CoreBluetooth (which negotiates the ATT MTU automatically), Android
+        // stays at the default 23-byte MTU (20 usable payload bytes) until the app explicitly
+        // requests more - and O5's packet layout allows payloads up to 244 bytes (see
+        // BlePacketLayout.OMNIPOD_5), so without this, any O5 message needing more than one
+        // ~18-byte fragment would get silently truncated on the wire. Dash doesn't need this:
+        // its 20-byte packets already fit the un-negotiated default.
+        val requestedMtu = BlePacketLayout.OMNIPOD_5.maxPayloadSize + ATT_HEADER_SIZE
+        if (!gatt.requestMtu(requestedMtu)) {
+            throw FailedToConnectException("requestMtu($requestedMtu) returned false")
+        }
+        if (!bleCommCallbacks.waitForMtuChange(MTU_NEGOTIATION_TIMEOUT_MS)) {
+            throw FailedToConnectException("Timed out waiting for MTU negotiation")
+        }
+        if (bleCommCallbacks.negotiatedMtu < requestedMtu) {
+            aapsLogger.warn(
+                LTag.PUMPBTCOMM,
+                "Pod granted a smaller MTU than requested (O5): ${bleCommCallbacks.negotiatedMtu} < $requestedMtu"
+            )
+        }
+
         val discoverer = ServiceDiscoverer(aapsLogger, gatt, bleCommCallbacks, this)
         val discovered = discoverer.discoverServices(connectionWaitCond, PodType.OMNIPOD_5)
+
+        // O5 has a separate GATT service used purely for pod keep-alive, entirely absent
+        // from Dash's profile (see BlePodProfile.swift: heartbeatServiceUUID is nil for
+        // Dash, real UUIDs for O5). OmnipodKit's makePeripheralConfiguration() discovers
+        // and subscribes to it as part of this same initial connection setup, alongside
+        // CMD/DATA. Best-effort/non-fatal: a pod firmware that expects a fully-set-up
+        // central and never sees this subscription could plausibly explain a disconnect a
+        // few seconds into pairing with no other explanation - but this is unverified
+        // against real hardware, so a missing service or failed subscription must not
+        // become a new way for pairing to fail outright.
+        enableHeartbeatNotifications(gatt)
+
         val cmdBleIO = CmdBleIO(
             aapsLogger,
             discovered.getValue(CharacteristicType.CMD),
@@ -121,9 +163,10 @@ class O5Connection(
             discovered.getValue(CharacteristicType.DATA),
             incomingPackets.dataQueue,
             gatt,
-            bleCommCallbacks
+            bleCommCallbacks,
+            CharacteristicType.DATA_O5
         )
-        msgIO = MessageIO(aapsLogger, cmdBleIO, dataBleIO)
+        msgIO = MessageIO(aapsLogger, cmdBleIO, dataBleIO, PodType.OMNIPOD_5)
         cmdBleIO.hello()
         cmdBleIO.readyToRead()
         dataBleIO.readyToRead()
@@ -143,6 +186,55 @@ class O5Connection(
             session = null
             msgIO = null
             podState.bluetoothConnectionState = O5PodStateManager.BluetoothConnectionState.DISCONNECTED
+        }
+    }
+
+    /**
+     * See the call site in [connect] for why this exists. Determines notify vs indicate
+     * from the characteristic's own declared properties rather than assuming either, since
+     * this characteristic's actual GATT properties haven't been confirmed against real
+     * hardware yet.
+     */
+    private fun enableHeartbeatNotifications(gatt: BluetoothGatt) {
+        val service = gatt.getService(UUID.fromString(BluetoothServiceUuids.O5_HEARTBEAT_SERVICE_UUID))
+        if (service == null) {
+            aapsLogger.warn(LTag.PUMPBTCOMM, "O5 heartbeat service not found - continuing without it")
+            return
+        }
+        val characteristic = service.getCharacteristic(UUID.fromString(BluetoothServiceUuids.O5_HEARTBEAT_CHARACTERISTIC_UUID))
+        if (characteristic == null) {
+            aapsLogger.warn(LTag.PUMPBTCOMM, "O5 heartbeat characteristic not found - continuing without it")
+            return
+        }
+        if (!gatt.setCharacteristicNotification(characteristic, true)) {
+            aapsLogger.warn(LTag.PUMPBTCOMM, "Could not enable local notifications for O5 heartbeat characteristic")
+            return
+        }
+        val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
+        if (descriptor == null) {
+            aapsLogger.warn(LTag.PUMPBTCOMM, "O5 heartbeat characteristic has no CCCD - continuing without it")
+            return
+        }
+        val enableValue =
+            if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0) {
+                BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+            } else {
+                BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            }
+        descriptor.value = enableValue
+        if (!gatt.writeDescriptor(descriptor)) {
+            aapsLogger.warn(LTag.PUMPBTCOMM, "Could not write O5 heartbeat CCCD")
+            return
+        }
+        val confirmation = bleCommCallbacks.confirmWrite(
+            enableValue,
+            descriptor.uuid.toString(),
+            BleCharacteristicIO.DEFAULT_IO_TIMEOUT_MS
+        )
+        if (confirmation !is WriteConfirmationSuccess) {
+            aapsLogger.warn(LTag.PUMPBTCOMM, "Could not confirm O5 heartbeat CCCD write: $confirmation")
+        } else {
+            aapsLogger.debug(LTag.PUMPBTCOMM, "O5 heartbeat notifications enabled")
         }
     }
 
@@ -203,7 +295,15 @@ class O5Connection(
                     aapsLogger.info(LTag.PUMPCOMM, "Nonce (O5): ${keys.nonce}")
                 }
                 val enDecrypt = EnDecrypt(aapsLogger, keys.nonce, keys.ck)
-                session = Session(aapsLogger, mIO, ids, sessionKeys = keys, enDecrypt = enDecrypt)
+                // Real O5 pod firmware rejects certain dose-affecting commands unless
+                // Type-4-signed (see Session.sign()'s doc comment) - reuse the same
+                // certificate/keypair pairing already validated for this controller id,
+                // rather than a separate signing-only code path.
+                val controllerId = requireNotNull(podState.controllerId) {
+                    "Missing controllerId, cannot establish a signed O5 session"
+                }
+                val certStore = O5CertificateStore(aapsLogger, p256KeyGenerator, controllerId)
+                session = Session(aapsLogger, mIO, ids, sessionKeys = keys, enDecrypt = enDecrypt, commandSigner = certStore)
                 null
             }
         }
@@ -224,5 +324,13 @@ class O5Connection(
         const val MIN_DISCOVERY_TIMEOUT_MS = 10000L
         const val MAX_WAIT_FOR_CONNECTION_SECONDS = Constants.PUMP_MAX_CONNECTION_TIME_IN_SECONDS + 10
         const val SLEEP_WHEN_FAILING_TO_CONNECT_GATT = 10000L
+
+        /** BLE ATT opcode (1 byte) + attribute handle (2 bytes) overhead per spec. */
+        private const val ATT_HEADER_SIZE = 3
+        private const val MTU_NEGOTIATION_TIMEOUT_MS = 5000L
+
+        /** Standard Client Characteristic Configuration Descriptor UUID (BLE spec). */
+        private val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID =
+            UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 }

@@ -62,7 +62,10 @@ internal class AfrezzaDoseMappingTest {
 
     private val afrezzaCfg = ICfg(
         insulinLabel = "Afrezza (Inhaled)",
-        peak = 40,
+        // Must match InsulinType.OREF_INHALED_AFREZZA.insulinPeakTime (15 min) - findAfrezzaIcfg()
+        // matches on this exact peak, and 40 falls outside the 10-30 min clinical range this
+        // branch's own adjustable-range limits allow, so it never actually matched.
+        peak = 15,
         dia = 2.5,
         concentration = 1.0
     )

@@ -19,6 +19,7 @@ import app.aaps.pump.omnipod.common.bledriver.comm.session.Connected
 import app.aaps.pump.omnipod.common.bledriver.comm.session.ConnectionWaitCondition
 import app.aaps.pump.omnipod.common.bledriver.comm.session.NotConnected
 import app.aaps.pump.omnipod.common.bledriver.pod.state.O5PodStateManager
+import app.aaps.pump.omnipod.common.bledriver.pod.util.P256KeyGenerator
 import app.aaps.shared.tests.AAPSLoggerTest
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -59,11 +60,12 @@ class O5ConnectionTest {
     private val podState = mock<O5PodStateManager>()
     private val podDevice = mock<BluetoothDevice>()
     private val bluetoothManager = mock<BluetoothManager>()
+    private val p256KeyGenerator = mock<P256KeyGenerator>()
 
     private fun newConnection(bluetoothServiceAvailable: Boolean = true): O5Connection {
         whenever(context.getSystemService(Context.BLUETOOTH_SERVICE))
             .thenReturn(if (bluetoothServiceAvailable) bluetoothManager else null)
-        return O5Connection(podDevice, aapsLogger, config, context, podState)
+        return O5Connection(podDevice, aapsLogger, config, context, podState, p256KeyGenerator)
     }
 
     // ---- connectionState() --------------------------------------------------------------
@@ -162,19 +164,20 @@ class O5ConnectionTest {
     // ---- connect() happy path --------------------------------------------------------------
     //
     // Full end-to-end coverage (through readyToRead()) is not reachable in this pure-JVM
-    // unit test: BleIO.readyToRead() reads the real, unmocked static field
-    // BluetoothGattDescriptor.ENABLE_INDICATION_VALUE, and this project's unit-test
-    // android.jar stub only strips *method bodies* - non-primitive static fields like this
-    // byte[] never run their real initializer, so the field is genuinely null here (not a
-    // mocking gap: it's a real `getstatic` read of production code, which Mockito cannot
-    // intercept - only method calls on mock() objects can be stubbed). Kotlin's own
-    // null-safety check on that platform-type field then throws NPE
-    // ("ENABLE_INDICATION_VALUE must not be null"). This is an environment boundary, not a
-    // code defect - the same call would work fine against a real device or an
-    // instrumented/Robolectric test, neither in scope here (no on-device testing without
-    // explicit request per project rules). This test therefore covers everything that *is*
-    // reachable - GATT connect, service discovery, and the hello() write/confirm cycle -
-    // and pins the NPE as the expected, documented stopping point.
+    // unit test: BleIO.readyToRead() reads a real, unmocked static field -
+    // BluetoothGattDescriptor.ENABLE_INDICATION_VALUE or ENABLE_NOTIFICATION_VALUE,
+    // depending on usesIndicate() - and this project's unit-test android.jar stub only
+    // strips *method bodies* - non-primitive static fields like this byte[] never run
+    // their real initializer, so the field is genuinely null here (not a mocking gap:
+    // it's a real `getstatic` read of production code, which Mockito cannot intercept -
+    // only method calls on mock() objects can be stubbed). Kotlin's own null-safety
+    // check on that platform-type value then throws NPE. This is an environment
+    // boundary, not a code defect - the same call would work fine against a real device
+    // or an instrumented/Robolectric test, neither in scope here (no on-device testing
+    // without explicit request per project rules). This test therefore covers
+    // everything that *is* reachable - GATT connect, service discovery, and the
+    // hello() write/confirm cycle - and pins the NPE as the expected, documented
+    // stopping point.
 
     @Test fun `connect completes GATT connection, service discovery and hello() before hitting the readyToRead() environment boundary`() {
         val gatt = mock<BluetoothGatt>()
@@ -198,6 +201,15 @@ class O5ConnectionTest {
             bleCommCallbacks = callbacks
             callbacks.onConnectionStateChange(gatt, BluetoothGatt.GATT_SUCCESS, BluetoothProfile.STATE_CONNECTED)
             gatt
+        }
+
+        // requestMtu(): fire onMtuChanged synchronously, echoing back whatever MTU was
+        // actually requested (granted in full) - same reason as the other GATT calls
+        // below, avoids blocking on O5Connection's real MTU_NEGOTIATION_TIMEOUT_MS wait.
+        whenever(gatt.requestMtu(any())).thenAnswer { invocation ->
+            val requestedMtu = invocation.getArgument<Int>(0)
+            bleCommCallbacks!!.onMtuChanged(gatt, requestedMtu, BluetoothGatt.GATT_SUCCESS)
+            true
         }
 
         // discoverServices: fire the services-discovered callback synchronously for the
@@ -230,18 +242,27 @@ class O5ConnectionTest {
         }
 
         // readyToRead() gets as far as writing the indication descriptor (mocked to
-        // succeed) before reaching the unreachable step documented above - reading the
+        // succeed) before reaching the unreachable step documented above - passing the
         // real, null ENABLE_INDICATION_VALUE field as confirmWrite()'s expected-payload
         // argument, which Kotlin's own null-safety check on that parameter rejects.
+        // PROPERTY_INDICATE is stubbed explicitly (BleIO.usesIndicate() now checks this
+        // dynamically rather than assuming indicate unconditionally - see BleIOTest for
+        // direct coverage of that decision) so this test still exercises the same
+        // indicate path it always has. The exception's exact message text is no longer
+        // asserted - moving the field read behind usesIndicate()'s branch changed what
+        // Kotlin's compiler embeds in the generated null-check, which was always an
+        // incidental implementation detail, not the thing this test actually verifies
+        // (that everything up to this environment boundary genuinely ran).
         whenever(gatt.setCharacteristicNotification(any(), any())).thenReturn(true)
+        whenever(cmdChar.properties).thenReturn(BluetoothGattCharacteristic.PROPERTY_INDICATE)
         whenever(dataChar.descriptors).thenReturn(listOf(dataDescriptor))
+        whenever(dataChar.properties).thenReturn(BluetoothGattCharacteristic.PROPERTY_INDICATE)
         whenever(gatt.writeDescriptor(any())).thenReturn(true)
 
         val connection = newConnection()
-        val thrown = assertThrows(NullPointerException::class.java) {
+        assertThrows(NullPointerException::class.java) {
             connection.connect(ConnectionWaitCondition(timeoutMs = 50L))
         }
-        assertThat(thrown).hasMessageThat().contains("ENABLE_INDICATION_VALUE")
 
         // Everything up to that boundary genuinely ran: GATT connect, service discovery,
         // and a real, confirmed hello() write - not just "didn't throw yet".

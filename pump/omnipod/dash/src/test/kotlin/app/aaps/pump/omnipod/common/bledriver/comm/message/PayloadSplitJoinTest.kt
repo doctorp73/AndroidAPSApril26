@@ -1,6 +1,7 @@
 package app.aaps.pump.omnipod.common.bledriver.comm.message
 
 import app.aaps.core.utils.toHex
+import app.aaps.pump.omnipod.common.bledriver.comm.packet.BlePacketLayout
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.PayloadJoiner
 import app.aaps.pump.omnipod.common.bledriver.comm.packet.PayloadSplitter
 import com.google.common.truth.Truth.assertThat
@@ -15,11 +16,11 @@ class PayloadSplitJoinTest {
         for (s in 0..250) {
             val payload = ByteArray(s)
             random.nextBytes(payload)
-            val splitter = PayloadSplitter(payload)
+            val splitter = PayloadSplitter(payload, BlePacketLayout.DASH)
             val packets = splitter.splitInPackets()
-            val joiner = PayloadJoiner(packets[0].toByteArray())
+            val joiner = PayloadJoiner(packets[0].toByteArray(BlePacketLayout.DASH), BlePacketLayout.DASH)
             for (p in packets.subList(1, packets.size)) {
-                joiner.accumulate(p.toByteArray())
+                joiner.accumulate(p.toByteArray(BlePacketLayout.DASH))
             }
             val got = joiner.finalize()
             assertThat(got.toHex()).isEqualTo(payload.toHex())

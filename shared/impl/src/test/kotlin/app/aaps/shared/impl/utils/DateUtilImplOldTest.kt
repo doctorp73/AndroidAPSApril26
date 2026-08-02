@@ -8,6 +8,7 @@ import com.google.common.truth.Truth
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.Mock
 import org.mockito.junit.jupiter.MockitoExtension
@@ -16,28 +17,30 @@ import java.util.Date
 import java.util.SimpleTimeZone
 import java.util.TimeZone
 
+// Without this, @AfterAll must be static (JUnit5's default per-method instance lifecycle) -
+// forcing setDefaultTimezoneUtc()/restoreDefaultTimezone() into the companion object, which
+// (without @JvmStatic) hid them from JUnit5's reflection entirely: they were never actually
+// invoked, so every test below ran under this machine's real default timezone instead of the
+// UTC they assume. Silent everywhere the real default timezone already happens to be UTC
+// (most CI), which is almost certainly why this went unnoticed until now.
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @ExtendWith(MockitoExtension::class)
 class DateUtilImplOldTest() {
 
     @Mock lateinit var context: Context
     @Mock lateinit var rh: ResourceHelper
 
-    companion object {
+    private lateinit var savedTimeZone: TimeZone
 
-        private lateinit var savedTimeZone: TimeZone
+    @BeforeEach
+    fun setDefaultTimezoneUtc() {
+        savedTimeZone = TimeZone.getDefault()
+        TimeZone.setDefault(SimpleTimeZone(0, "UTC"))
+    }
 
-        @BeforeEach
-        
-        fun setDefaultTimezoneUtc() {
-            savedTimeZone = TimeZone.getDefault()
-            TimeZone.setDefault(SimpleTimeZone(0, "UTC"))
-        }
-
-        @AfterAll
-        
-        fun restoreDefaultTimezone() {
-            TimeZone.setDefault(savedTimeZone)
-        }
+    @AfterAll
+    fun restoreDefaultTimezone() {
+        TimeZone.setDefault(savedTimeZone)
     }
 
     @Test

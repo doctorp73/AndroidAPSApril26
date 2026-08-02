@@ -273,6 +273,9 @@ class DanaRv2ExecutionService : AbstractDanaRExecutionService() {
                 bolusProgressData.updateProgress(bolusProgressData.state.value?.percent ?: 0, bolusProgressData.state.value?.status ?: "", PumpInsulin(0.0))
                 return false
             }
+            // Arm the 15s comm watchdog from bolus start (was never initialised → a stale timestamp
+            // made the check below fire on the first iteration, falsely aborting the bolus).
+            danaPump.bolusProgressLastTimeStamp = System.currentTimeMillis()
             while (!danaPump.bolusStopped && !start.failed && !connectionBroken) {
                 SystemClock.sleep(100)
                 if (System.currentTimeMillis() - danaPump.bolusProgressLastTimeStamp > 15 * 1000L) { // if I didn't receive status for more than 15 sec expecting broken comm
@@ -323,7 +326,10 @@ class DanaRv2ExecutionService : AbstractDanaRExecutionService() {
         SystemClock.sleep(200)
         if (danaPump.lastEventTimeLoaded != 0L) danaPump.readHistoryFrom = danaPump.lastEventTimeLoaded - mins(1).msecs() else danaPump.readHistoryFrom = 0
         danaPump.lastConnection = System.currentTimeMillis()
-        return pumpEnactResultProvider.get().success(true)
+        // The wait loop above also exits on a mid-download socket disconnect (mRfcommSocket?.isConnected
+        // going false), so completion is NOT guaranteed. Report the actual state - same bug already
+        // fixed in AbstractDanaRExecutionService.loadHistory() and DanaRSService.loadEvents().
+        return pumpEnactResultProvider.get().success(danaPump.historyDoneReceived)
     }
 
     override suspend fun updateBasalsInPump(profile: Profile): Boolean {

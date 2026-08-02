@@ -239,6 +239,13 @@ class PersistedO5PodStateManager @Inject constructor(
     override val podStatusWhenAlarmOccurred: PodStatus? get() = podState.podStatusWhenAlarmOccurred
     override val rssi: Short? get() = podState.rssi
 
+    override var alarmSynced: Boolean
+        get() = podState.alarmSynced
+        set(value) {
+            podState.alarmSynced = value
+            store()
+        }
+
     override val podActivatedAt: Long? get() = podState.podActivatedAt
     override val triggeredAlertTimes: Map<AlertType, Short>? get() = podState.triggeredAlertTimes
 
@@ -455,6 +462,7 @@ class PersistedO5PodStateManager @Inject constructor(
         var occlusionAlarm: Boolean? = null,
         var podStatusWhenAlarmOccurred: PodStatus? = null,
         var rssi: Short? = null,
+        var alarmSynced: Boolean = false,
         var podActivatedAt: Long? = null,
         var triggeredAlertTimes: Map<AlertType, Short>? = null,
         var suspendAlertsEnabled: Boolean = true,
