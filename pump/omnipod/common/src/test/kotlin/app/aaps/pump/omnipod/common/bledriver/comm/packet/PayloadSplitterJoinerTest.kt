@@ -58,6 +58,66 @@ class PayloadSplitterJoinerTest : TestBase() {
         }
     }
 
+    // -- Cross-validation against OmnipodKit's own O5 framing test suite -------------------
+    //
+    // The expectations below are lifted from OmniTests/O5/O5BleFramingTests.swift (the
+    // reference Swift implementation's own tests, itsmojo/OmnipodKit `ble-heartbeat`). They
+    // pin this port's framing to the reference's asserted behavior rather than only to
+    // internal round-trip consistency, so a future divergence in either the layout constants
+    // or the split boundaries shows up here instead of on real hardware.
+
+    @Test
+    fun `O5 layout constants match OmnipodKit's asserted values`() {
+        val layout = BlePacketLayout.OMNIPOD_5
+        assertThat(layout.maxPayloadSize).isEqualTo(244)
+        assertThat(layout.maxFragments).isEqualTo(15)
+        assertThat(layout.firstPacketCapacityWithoutMiddlePackets).isEqualTo(237)
+        assertThat(layout.firstPacketCapacityWithMiddlePackets).isEqualTo(242)
+        assertThat(layout.firstPacketCapacityWithOptionalPlusOnePacket).isEqualTo(242)
+        assertThat(layout.middlePacketCapacity).isEqualTo(243)
+        assertThat(layout.lastPacketCapacity).isEqualTo(238)
+    }
+
+    @Test
+    fun `O5 split produces the same packet counts OmnipodKit asserts`() {
+        // Sizes and expected counts taken directly from O5BleFramingTests.swift, including
+        // its boundary cases (242/243 straddle firstPacketCapacityWithOptionalPlusOnePacket)
+        // and the AID/bolus message sizes it pins by name.
+        val expected = mapOf(
+            0 to 1,      // testSplitJoin_roundTrip_emptyPayload
+            100 to 1,    // testSplit_packetCount_monotonic
+            300 to 2,
+            242 to 2,    // testSplitJoin_roundTrip_boundary242
+            243 to 2,    // testSplitJoin_roundTrip_boundary243
+            500 to 3,    // testSplitJoin_roundTrip_medium500
+            641 to 3,    // testSplitJoin_roundTrip_multiPacketSizes
+            642 to 3,
+            893 to 4,
+            953 to 4,
+            18 to 1,     // utcSend
+            15 to 1,     // tdiSend
+            11 to 1,     // diaSend
+            17 to 1,     // egvSend
+            204 to 1,    // targetBgProfileSend
+            176 to 1,    // algorithmInsulinHistorySend
+            20 to 1      // bolusExtra (one-unit / prime / cannula)
+        )
+
+        for ((size, packetCount) in expected) {
+            val packets = PayloadSplitter(payloadOf(size, seed = size), BlePacketLayout.OMNIPOD_5).splitInPackets()
+            assertThat(packets).hasSize(packetCount)
+        }
+    }
+
+    @Test
+    fun `O5 953-byte payload reports three full fragments, as OmnipodKit asserts`() {
+        // testSplit_firstPacket_fullFragments_953: first.fullFragments == 3, 4 packets total.
+        val packets = PayloadSplitter(payloadOf(953, seed = 2), BlePacketLayout.OMNIPOD_5).splitInPackets()
+
+        assertThat(packets).hasSize(4)
+        assertThat(packets.filterIsInstance<FirstBlePacket>().single().fullFragments).isEqualTo(3)
+    }
+
     @Test
     fun `O5 last-packet remainder over 127 round-trips correctly (regression for the signed-Byte bug)`() {
         // firstPacketCapacityWithMiddlePackets=242, middlePacketCapacity=243: 2 middle
